@@ -1,0 +1,42 @@
+repos:
+- repo: https://github.com/psf/black
+  rev: 25.1.0
+  hooks:
+    - id: black
+      language_version: python3.13
+- repo: https://github.com/pycqa/isort
+  rev: 6.0.1
+  hooks:
+    - id: isort
+      language_version: python3.13
+- repo: https://github.com/pycqa/flake8
+  rev: 7.1.0
+  hooks:
+    - id: flake8
+      language_version: python3.13
+      files: ^(soniq|tests)/
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.19.0
+  hooks:
+    - id: mypy
+      language_version: python3.13
+      files: ^soniq/
+      args: ["--ignore-missing-imports"]
+      additional_dependencies:
+        - pydantic>=2.7.1
+        - pydantic-settings>=2.0.0
+        - asyncpg>=0.30.0
+- repo: local
+  hooks:
+    - id: features-public-api
+      name: features/dashboard public-API only
+      entry: scripts/lint_features_public_api.py
+      language: script
+      pass_filenames: false
+      files: ^soniq/(features|dashboard)/.*\.py$
+    - id: no-global-settings
+      name: no get_settings() outside constructor allowlist
+      entry: scripts/check_no_global_settings.py
+      language: script
+      pass_filenames: false
+      files: ^soniq/.*\.py$

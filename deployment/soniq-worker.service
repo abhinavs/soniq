@@ -1,0 +1,48 @@
+# Soniq Worker systemd Service
+# Place this file in /etc/systemd/system/soniq-worker.service
+
+[Unit]
+Description=Soniq Worker
+After=network.target
+# Note: Remove postgresql.service dependency if PostgreSQL runs on remote server
+# After=network.target postgresql.service
+# Requires=postgresql.service
+
+[Service]
+Type=exec
+User=soniq
+Group=soniq
+WorkingDirectory=/opt/soniq
+Environment=SONIQ_DATABASE_URL=postgresql://soniq:password@localhost/soniq_prod
+Environment=SONIQ_LOG_LEVEL=INFO
+Environment=SONIQ_JOBS_MODULES=myapp.jobs
+ExecStart=/opt/soniq/venv/bin/soniq worker --concurrency=4
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/soniq /var/log/soniq
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=200%
+
+# Health monitoring
+ExecStartPre=/opt/soniq/venv/bin/soniq inspect
+TimeoutStartSec=30
+WatchdogSec=60
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=soniq-worker
+
+[Install]
+WantedBy=multi-user.target

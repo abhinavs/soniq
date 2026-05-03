@@ -1,0 +1,64 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install mypy
+
+      - name: Check formatting with black
+        run: black --check soniq/ tests/ examples/
+
+      - name: Check import order with isort
+        run: isort --check-only soniq/ tests/ examples/
+
+      - name: Lint with flake8
+        run: flake8 soniq/ tests/
+
+      - name: Type check with mypy
+        run: mypy soniq/ --ignore-missing-imports
+
+      - name: Type check public surface with mypy --strict
+        # --follow-imports=silent scopes strict-mode reporting to the listed
+        # public modules. Internal modules are not yet strict-clean and are
+        # checked by the relaxed `mypy soniq/` step above.
+        run: |
+          mypy --strict --follow-imports=silent \
+            soniq/__init__.py \
+            soniq/app.py \
+            soniq/job.py \
+            soniq/task_ref.py \
+            soniq/errors.py \
+            soniq/settings.py \
+            soniq/plugin.py \
+            soniq/schedules.py \
+            soniq/core/middleware.py \
+            soniq/core/retry.py \
+            soniq/observability/metrics.py
+
+      - name: No global get_settings() in core paths
+        run: scripts/check_no_global_settings.py
+
+      - name: Check for dead documentation URLs
+        run: |
+          if grep -r "docs\.soniq\.abhinav\.co" soniq/ examples/ docs/; then
+            echo "ERROR: Found references to non-existent docs.soniq.abhinav.co"
+            exit 1
+          fi

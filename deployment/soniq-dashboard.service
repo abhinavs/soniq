@@ -1,0 +1,48 @@
+# Soniq Dashboard systemd Service
+# Place this file in /etc/systemd/system/soniq-dashboard.service
+
+[Unit]
+Description=Soniq Dashboard
+After=network.target soniq-worker.service
+# Note: Remove postgresql.service dependency if PostgreSQL runs on remote server
+# After=network.target postgresql.service soniq-worker.service
+# Requires=postgresql.service
+Wants=soniq-worker.service
+
+[Service]
+Type=exec
+User=soniq
+Group=soniq
+WorkingDirectory=/opt/soniq
+Environment=SONIQ_DATABASE_URL=postgresql://soniq:password@localhost/soniq_prod
+Environment=SONIQ_LOG_LEVEL=INFO
+Environment=SONIQ_DASHBOARD_ENABLED=true
+ExecStart=/opt/soniq/venv/bin/soniq dashboard --host=0.0.0.0 --port=8000
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/soniq /var/log/soniq
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=100%
+
+# Health monitoring
+ExecStartPre=/opt/soniq/venv/bin/soniq ready
+TimeoutStartSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=soniq-dashboard
+
+[Install]
+WantedBy=multi-user.target

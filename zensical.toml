@@ -1,0 +1,84 @@
+[project]
+site_name = "Soniq"
+site_url = "https://soniq.abhinav.co/"
+site_description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
+site_author = "Abhinav Saxena"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  { "Home" = "index.md" },
+  { "Why Soniq?" = "why-soniq.md" },
+  { "Quickstart" = "quickstart.md" },
+  { "Tutorial" = [
+    { "1. Defining jobs" = "tutorial/01-defining-jobs.md" },
+    { "2. Running workers" = "tutorial/02-running-workers.md" },
+    { "3. Retries" = "tutorial/03-retries.md" },
+    { "4. Scheduling" = "tutorial/04-scheduling.md" },
+    { "5. Queues" = "tutorial/05-queues.md" },
+    { "6. Transactional enqueue" = "tutorial/06-transactional-enqueue.md" },
+  ] },
+  { "Guides" = [
+    { "FastAPI" = "guides/fastapi.md" },
+    { "Transactional enqueue" = "guides/transactional-enqueue.md" },
+    { "Common patterns" = "guides/common-patterns.md" },
+    { "Testing" = "guides/testing.md" },
+  ] },
+  { "Recipes" = [
+    { "Overview" = "recipes/index.md" },
+    { "Email jobs" = "recipes/email-jobs.md" },
+    { "File processing" = "recipes/file-processing.md" },
+    { "Scheduled reports" = "recipes/scheduled-reports.md" },
+    { "Webhook delivery" = "recipes/webhook-delivery.md" },
+    { "Cross-service task stubs" = "recipes/cross-service-task-stubs.md" },
+    { "Custom retry policy" = "recipes/custom-retry-policy.md" },
+    { "Custom metrics sink" = "recipes/custom-metrics-sink.md" },
+  ] },
+  { "Migrating" = [
+    { "Overview" = "migration/index.md" },
+    { "From Celery" = "migration/from-celery.md" },
+    { "From RQ" = "migration/from-rq.md" },
+  ] },
+  { "Reference" = [
+    { "Overview" = "reference/index.md" },
+    { "Python API" = [
+      { "Soniq" = "api/soniq.md" },
+      { "Jobs" = "api/jobs.md" },
+      { "Worker" = "api/worker.md" },
+      { "Hooks" = "api/hooks.md" },
+    ] },
+    { "CLI" = "cli/commands.md" },
+    { "Dashboard" = "dashboard/overview.md" },
+    { "Dead-letter queue" = "reference/dead-letter.md" },
+    { "Glossary" = "reference/glossary.md" },
+  ] },
+  { "Production" = [
+    { "Going to production" = "production/going-to-production.md" },
+    { "Deployment" = [
+      { "Overview" = "production/deployment.md" },
+      { "Systemd" = "production/deployment-systemd.md" },
+      { "Docker Compose" = "production/deployment-docker-compose.md" },
+      { "Kubernetes" = "production/deployment-kubernetes.md" },
+      { "Supervisor" = "production/deployment-supervisor.md" },
+    ] },
+    { "PostgreSQL tuning" = "production/postgres.md" },
+    { "Reliability" = "production/reliability.md" },
+  ] },
+  { "Troubleshooting" = "troubleshooting.md" },
+]
+
+[project.theme]
+variant = "modern"
+logo = "assets/logo.svg"
+favicon = "assets/logo.svg"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
