@@ -1,0 +1,137 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soniq"
+version = "0.0.2"
+description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
+authors = [{ name = "Abhinav Saxena", email = "abhinav@apiclabs.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Distributed Computing",
+]
+keywords = [
+  "async",
+  "job",
+  "queue",
+  "postgresql",
+  "task",
+  "redis-alternative",
+  "developer-experience",
+  "background-jobs",
+]
+dependencies = [
+  "asyncpg>=0.30.0,<1.0",
+  "pydantic>=2.7.1,<3.0.0",
+  "pydantic-settings>=2.0.0,<3.0.0",
+  # Batteries-included runtime: scheduler + Prometheus metrics ship in
+  # the default install. Dormant unless wired (no scheduler process /
+  # no @periodic decorators / NoopMetricsSink default), but importable
+  # without a separate extra.
+  "croniter>=1.4.0",
+  "prometheus-client>=0.15.0",
+]
+
+[project.optional-dependencies]
+# UI is opt-in. Core, scheduler, monitoring, CLI all run without these.
+dashboard = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
+sqlite = ["aiosqlite>=0.19.0"]
+webhooks = ["aiohttp>=3.8.0", "cryptography>=3.4.0"]
+logging = ["structlog>=22.0.0"]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "httpx>=0.24.0",
+  "black==25.1.0",
+  "flake8==7.1.0",
+  "isort==6.0.1",
+  "mypy>=1.0.0",
+  "pre-commit>=3.4.0",
+  "aiohttp>=3.8.0",
+  "aiosqlite>=0.19.0",
+  "structlog>=22.0.0",
+  "cryptography>=3.4.0",
+  "fastapi>=0.100.0",
+  "uvicorn>=0.20.0",
+]
+full = ["soniq[sqlite,webhooks,logging,dashboard]"]
+
+[project.urls]
+Homepage = "https://github.com/abhinavs/soniq"
+Repository = "https://github.com/abhinavs/soniq"
+Documentation = "https://github.com/abhinavs/soniq/tree/main/docs"
+Changelog = "https://github.com/abhinavs/soniq/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/abhinavs/soniq/issues"
+
+[project.scripts]
+soniq = "soniq.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["soniq*"]
+exclude = ["tests*", "deployment*"]
+
+[tool.setuptools.package-data]
+soniq = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.black]
+# Standard Black configuration
+line-length = 88
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+# Make isort compatible with Black
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_glob = [".venv/*", ".venv-old/*"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# `mypy --strict --follow-imports=silent <public modules>` runs as a
+# dedicated CI step (see .github/workflows/lint.yml). Per-module
+# `strict = true` overrides leak strict checks into transitively-imported
+# modules, so the strict bar is enforced via the CI command rather than
+# this config file. Public modules covered by the strict CI step:
+#   soniq/__init__.py, soniq/app.py, soniq/job.py, soniq/task_ref.py,
+#   soniq/errors.py, soniq/settings.py, soniq/plugin.py,
+#   soniq/schedules.py, soniq/core/middleware.py, soniq/core/retry.py,
+#   soniq/observability/metrics.py

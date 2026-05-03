@@ -1,0 +1,41 @@
+# Soniq Scheduler systemd Service
+# Place this file in /etc/systemd/system/soniq-scheduler.service
+
+[Unit]
+Description=Soniq Scheduler
+After=network.target soniq-worker.service
+Requires=soniq-worker.service
+
+[Service]
+Type=exec
+User=soniq
+Group=soniq
+WorkingDirectory=/opt/soniq
+Environment=SONIQ_DATABASE_URL=postgresql://soniq:password@localhost/soniq_prod
+Environment=SONIQ_LOG_LEVEL=INFO
+Environment=SONIQ_SCHEDULING_ENABLED=true
+ExecStart=/opt/soniq/venv/bin/soniq scheduler
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/soniq /var/log/soniq
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=100%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=soniq-scheduler
+
+[Install]
+WantedBy=multi-user.target

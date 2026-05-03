@@ -1,0 +1,370 @@
+# Soniq Kubernetes Deployment
+# Production-ready Kubernetes configuration
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soniq
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: soniq-config
+  namespace: soniq
+data:
+  SONIQ_LOG_LEVEL: "INFO"
+  SONIQ_JOBS_MODULES: "myapp.jobs"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: soniq-secrets
+  namespace: soniq
+type: Opaque
+data:
+  # Base64 encoded values - replace with actual values
+  SONIQ_DATABASE_URL: cG9zdGdyZXNxbDovL2Zhc3Rqb2I6cGFzc3dvcmRAbG9jYWxob3N0L2Zhc3Rqb2JfcHJvZA==
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soniq-worker
+  namespace: soniq
+  labels:
+    app: soniq-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: soniq-worker
+  template:
+    metadata:
+      labels:
+        app: soniq-worker
+    spec:
+      containers:
+      - name: soniq-worker
+        image: soniq/worker:latest
+        imagePullPolicy: Always
+        args:
+          - "soniq"
+          - "worker"
+          - "--concurrency=4"
+        env:
+        - name: SONIQ_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DATABASE_URL
+        # The soniq-scheduler Deployment below handles @periodic jobs;
+        # silence the WARN that would otherwise appear in worker logs.
+        - name: SONIQ_SCHEDULER_SUPPRESS_WARNING
+          value: "1"
+        envFrom:
+        - configMapRef:
+            name: soniq-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - soniq
+            - health
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - soniq
+            - ready
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+      restartPolicy: Always
+
+---
+# Soniq Scheduler. Required for `@periodic` jobs. Run a single replica;
+# multiple replicas coordinate via the `soniq.maintenance` advisory lock
+# but only one is needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soniq-scheduler
+  namespace: soniq
+  labels:
+    app: soniq-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: soniq-scheduler
+  template:
+    metadata:
+      labels:
+        app: soniq-scheduler
+    spec:
+      containers:
+      - name: soniq-scheduler
+        image: soniq/worker:latest
+        imagePullPolicy: Always
+        args:
+          - "soniq"
+          - "scheduler"
+        env:
+        - name: SONIQ_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DATABASE_URL
+        - name: SONIQ_SCHEDULING_ENABLED
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: soniq-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+      restartPolicy: Always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soniq-dashboard
+  namespace: soniq
+  labels:
+    app: soniq-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: soniq-dashboard
+  template:
+    metadata:
+      labels:
+        app: soniq-dashboard
+    spec:
+      containers:
+      - name: soniq-dashboard
+        image: soniq/dashboard:latest
+        imagePullPolicy: Always
+        args:
+          - "soniq"
+          - "dashboard"
+          - "--host=0.0.0.0"
+          - "--port=8000"
+        env:
+        - name: SONIQ_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DATABASE_URL
+        envFrom:
+        - configMapRef:
+            name: soniq-config
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: soniq-dashboard-service
+  namespace: soniq
+  labels:
+    app: soniq-dashboard
+spec:
+  selector:
+    app: soniq-dashboard
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: soniq-dashboard-ingress
+  namespace: soniq
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - soniq.yourdomain.com
+    secretName: soniq-tls
+  rules:
+  - host: soniq.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: soniq-dashboard-service
+            port:
+              number: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soniq-priority-worker
+  namespace: soniq
+  labels:
+    app: soniq-priority-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: soniq-priority-worker
+  template:
+    metadata:
+      labels:
+        app: soniq-priority-worker
+    spec:
+      containers:
+      - name: soniq-priority-worker
+        image: soniq/worker:latest
+        imagePullPolicy: Always
+        args:
+          - "soniq"
+          - "worker"
+          - "--concurrency=2"
+          - "--queues=urgent"
+        env:
+        - name: SONIQ_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DATABASE_URL
+        envFrom:
+        - configMapRef:
+            name: soniq-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        livenessProbe:
+          exec:
+            command:
+            - soniq
+            - health
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - soniq
+            - ready
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      restartPolicy: Always
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: soniq-worker-hpa
+  namespace: soniq
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: soniq-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: soniq-metrics
+  namespace: soniq
+  labels:
+    app: soniq
+spec:
+  selector:
+    matchLabels:
+      app: soniq-dashboard
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
