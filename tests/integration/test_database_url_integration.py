@@ -25,11 +25,18 @@ def _make_test_db_url(db_name: str) -> str:
     return f"postgresql://postgres@localhost/{db_name}"
 
 
-def run_cli_command(cmd_args, timeout=10, expect_success=True):
-    """Run a CLI command and return the result."""
+def run_cli_command(cmd_args, timeout=10, expect_success=True, extra_env=None):
+    """Run a CLI command and return the result.
+
+    ``extra_env`` overrides environment variables for this subprocess only
+    (it never touches the parent's ``os.environ``), so a test can pin the
+    database URL / job modules a command sees without leaking into later tests.
+    """
     full_cmd = [sys.executable, "-m", "soniq.cli.main"] + cmd_args
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
+    if extra_env:
+        env.update(extra_env)
 
     result = subprocess.run(
         full_cmd,
@@ -155,10 +162,23 @@ class TestDatabaseUrlIntegration:
         assert "Using instance-based configuration" in result.stdout or result.stderr
 
     def test_start_worker_with_database_url(self):
-        """Test that worker command works with --database-url parameter."""
+        """A worker accepts --database-url when it agrees with the database its
+        job-module instance connects to.
+
+        A worker runs on the instance its job modules registered handlers on, so
+        --database-url can only be *consistent* with that instance - it can't
+        override it. Here we point both the job-module instance (via
+        SONIQ_DATABASE_URL, which the cli_jobs fixture's ``Soniq()`` reads at
+        construction) and the flag at the same database, so there's no conflict
+        and the worker runs. A *mismatching* flag is the hard-error case covered
+        by test_cli_worker_database_url_conflict_errors in test_cli_integration.
+
+        The environment is pinned explicitly (rather than inherited) so the test
+        doesn't depend on whatever SONIQ_JOBS_MODULES an earlier test left set.
+        """
         test_db_url = _make_test_db_url("soniq_db_url_test_1")
 
-        # Use --run-once to exit quickly
+        # --run-once exits as soon as the queue is drained.
         result = run_cli_command(
             [
                 "worker",
@@ -169,9 +189,14 @@ class TestDatabaseUrlIntegration:
                 "1",
             ],
             timeout=5,
+            extra_env={
+                "SONIQ_DATABASE_URL": test_db_url,
+                "SONIQ_JOBS_MODULES": "tests.fixtures.cli_jobs",
+            },
         )
         assert result.returncode == 0
-        assert "Using instance-based configuration" in result.stdout or result.stderr
+        combined = result.stdout + result.stderr
+        assert "Using job-module instance" in combined
 
     def test_multiple_database_urls_isolation(self):
         """Test that different --database-url parameters target different databases."""
