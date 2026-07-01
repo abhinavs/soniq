@@ -4,6 +4,17 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3]
+
+### Fixed
+
+- **`soniq worker` now runs jobs on the same `Soniq` instance the handlers registered on.** The worker previously built a fresh instance with an empty registry, so every discovered job dead-lettered as "not registered". It now resolves the instance the imported job modules actually declared their handlers on. When several instances are found, the one with registered jobs wins; a genuine tie raises `AmbiguousAppError` with guidance.
+
+### Added
+
+- **`soniq scheduler --jobs-modules`** (and automatic `SONIQ_JOBS_MODULES` import). The scheduler previously never imported job modules, so it couldn't see any `@app.periodic` definitions. It now imports them the same way the worker does and warns when no modules are configured.
+- **`--database-url` conflict is now a hard error** when it disagrees with `SONIQ_DATABASE_URL`, instead of silently running against the wrong database. URLs that differ only cosmetically (scheme spelling, host casing, default port, trailing slash) are treated as equal.
+
 ## [0.0.2]
 
 First public release.

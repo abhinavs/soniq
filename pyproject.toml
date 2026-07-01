@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soniq"
-version = "0.0.2"
+version = "0.0.3"
 description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
 authors = [{ name = "Abhinav Saxena", email = "abhinav@apiclabs.com" }]
 readme = "README.md"
