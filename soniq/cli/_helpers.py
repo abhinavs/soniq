@@ -6,6 +6,9 @@ Two utilities every subcommand reaches for:
 - ``resolve_soniq_instance(args)``: turn a ``--database-url`` flag into
   a fresh ``Soniq`` instance, or ``None`` when the operator wants the
   global app. Centralised so error messages stay consistent.
+- ``resolve_jobs_modules(args)``: merge ``SONIQ_JOBS_MODULES`` with the
+  ``--jobs-modules`` flag into one ordered module list, so worker and
+  scheduler agree on precedence.
 - ``configure_cli_logging(level)``: attach a single stream handler to
   the root logger so long-running commands (worker, scheduler) emit
   job-lifecycle logs to the terminal. Idempotent.
@@ -18,11 +21,13 @@ flag spelt the same way everywhere.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from pydantic import ValidationError
 
 from soniq import Soniq
+from soniq.discovery import merge_module_lists
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,19 @@ def database_url_argument(parser) -> None:
         "--database-url",
         help="Database URL (overrides SONIQ_DATABASE_URL environment variable)",
         metavar="URL",
+    )
+
+
+def resolve_jobs_modules(args: Any) -> list[str]:
+    """Merge ``SONIQ_JOBS_MODULES`` (the base) with ``--jobs-modules`` (per-run
+    additions) into one ordered, de-duplicated module list.
+
+    ``soniq worker`` and ``soniq scheduler`` both resolve their modules this way,
+    so the env-var/flag precedence stays spelt the same in one place.
+    """
+    return merge_module_lists(
+        os.getenv("SONIQ_JOBS_MODULES", ""),
+        getattr(args, "jobs_modules", None) or "",
     )
 
 

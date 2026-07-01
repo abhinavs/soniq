@@ -5,8 +5,15 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ._context import cli_app
-from ._helpers import configure_cli_logging, database_url_argument
+from soniq.discovery import discover_and_import_modules
+
+from ._context import execution_app
+from ._helpers import (
+    configure_cli_logging,
+    database_url_argument,
+    resolve_jobs_modules,
+)
+from .colors import print_status
 
 
 def add_scheduler_cmd(subparsers) -> None:
@@ -20,6 +27,15 @@ def add_scheduler_cmd(subparsers) -> None:
         type=int,
         default=60,
         help="How often to check for due jobs in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--jobs-modules",
+        default=None,
+        help=(
+            "Comma-separated list of modules to import on startup. Merged with "
+            "SONIQ_JOBS_MODULES. The scheduler must import your @app.periodic "
+            "definitions to know what to fire."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -36,7 +52,20 @@ async def handle_scheduler(args) -> int:
     )
     configure_cli_logging(log_level)
 
-    async with cli_app(args) as app:
+    # Import the modules that declare @app.periodic jobs so the scheduler runs
+    # on the same instance they registered on (same reason the worker does).
+    modules = resolve_jobs_modules(args)
+    if modules:
+        discover_and_import_modules(modules)
+    else:
+        print_status(
+            "No job modules configured (set SONIQ_JOBS_MODULES or pass "
+            "--jobs-modules). The scheduler can only fire @app.periodic jobs "
+            "from modules it imports, so it will run but schedule nothing.",
+            "warning",
+        )
+
+    async with execution_app(args, modules) as app:
         scheduler = app.scheduler
 
         print(

@@ -134,3 +134,163 @@ def test_no_hint_for_syntax_error_in_module(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "PYTHONPATH" not in combined
+
+
+# --- find_soniq_app: the CLI must run jobs on the instance they registered on --
+
+
+def _write_pkg(tmp_path, name, files):
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    for filename, content in files.items():
+        (pkg / filename).write_text(content)
+
+
+def test_find_app_instance_in_listed_module(tmp_path, monkeypatch):
+    """The instance declared at the top of the listed module is returned."""
+    _write_pkg(
+        tmp_path,
+        "app_direct",
+        {
+            "jobs.py": (
+                "from soniq import Soniq\n"
+                "app = Soniq()\n"
+                "@app.job(name='direct_job')\n"
+                "async def direct_job():\n"
+                "    return 'ok'\n"
+            )
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import discover_and_import_modules, find_soniq_app
+
+    discover_and_import_modules(["app_direct.jobs"])
+    app = find_soniq_app(["app_direct.jobs"])
+
+    assert app is not None
+    assert app.registry.get_job("direct_job") is not None
+
+
+def test_find_app_instance_in_sibling_module(tmp_path, monkeypatch):
+    """The common layout: the listed module only *imports* handlers, and the
+    Soniq instance lives in a sibling module of the same package."""
+    _write_pkg(
+        tmp_path,
+        "app_sibling",
+        {
+            "core.py": "from soniq import Soniq\napp = Soniq()\n",
+            "handlers.py": (
+                "from app_sibling.core import app\n"
+                "@app.job(name='sibling_job')\n"
+                "async def sibling_job():\n"
+                "    return 'ok'\n"
+            ),
+            "jobs.py": "from app_sibling import handlers  # noqa: F401\n",
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import discover_and_import_modules, find_soniq_app
+
+    discover_and_import_modules(["app_sibling.jobs"])
+    app = find_soniq_app(["app_sibling.jobs"])
+
+    assert app is not None
+    assert app.registry.get_job("sibling_job") is not None
+
+
+def test_find_app_returns_none_when_no_instance(tmp_path, monkeypatch):
+    _write_pkg(tmp_path, "app_none", {"jobs.py": "VALUE = 1\n"})
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import discover_and_import_modules, find_soniq_app
+
+    discover_and_import_modules(["app_none.jobs"])
+    assert find_soniq_app(["app_none.jobs"]) is None
+
+
+def test_find_app_prefers_instance_with_registered_jobs(tmp_path, monkeypatch):
+    """A second, job-less Soniq() in the package (a dashboard sub-app, a
+    fixture) must not make resolution ambiguous - the instance that actually
+    owns jobs wins."""
+    _write_pkg(
+        tmp_path,
+        "app_two_one_job",
+        {
+            "jobs.py": (
+                "from soniq import Soniq\n"
+                "dashboard = Soniq()  # no jobs registered on this one\n"
+                "app = Soniq()\n"
+                "@app.job(name='real_job')\n"
+                "async def real_job():\n"
+                "    return 'ok'\n"
+            )
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import discover_and_import_modules, find_soniq_app
+
+    discover_and_import_modules(["app_two_one_job.jobs"])
+    app = find_soniq_app(["app_two_one_job.jobs"])
+
+    assert app is not None
+    assert app.registry.get_job("real_job") is not None
+
+
+def test_find_app_raises_when_multiple_instances_own_jobs(tmp_path, monkeypatch):
+    """The tie-break only helps when exactly one instance has jobs. If two
+    both own jobs, resolution is genuinely ambiguous and must still raise."""
+    _write_pkg(
+        tmp_path,
+        "app_two_both_jobs",
+        {
+            "jobs.py": (
+                "from soniq import Soniq\n"
+                "app_one = Soniq()\n"
+                "app_two = Soniq()\n"
+                "@app_one.job(name='job_one')\n"
+                "async def job_one():\n"
+                "    return 'ok'\n"
+                "@app_two.job(name='job_two')\n"
+                "async def job_two():\n"
+                "    return 'ok'\n"
+            )
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import (
+        AmbiguousAppError,
+        discover_and_import_modules,
+        find_soniq_app,
+    )
+
+    discover_and_import_modules(["app_two_both_jobs.jobs"])
+    with pytest.raises(AmbiguousAppError):
+        find_soniq_app(["app_two_both_jobs.jobs"])
+
+
+def test_find_app_raises_on_multiple_instances(tmp_path, monkeypatch):
+    _write_pkg(
+        tmp_path,
+        "app_ambiguous",
+        {
+            "jobs.py": (
+                "from soniq import Soniq\n" "app_one = Soniq()\n" "app_two = Soniq()\n"
+            )
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from soniq.discovery import (
+        AmbiguousAppError,
+        discover_and_import_modules,
+        find_soniq_app,
+    )
+
+    discover_and_import_modules(["app_ambiguous.jobs"])
+    with pytest.raises(AmbiguousAppError):
+        find_soniq_app(["app_ambiguous.jobs"])
