@@ -198,7 +198,12 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         new_job_id = await data.replay_dead_letter(dead_letter_id)
         if not new_job_id:
             raise HTTPException(
-                status_code=400, detail="Unable to replay dead-letter job"
+                status_code=400,
+                detail=(
+                    "Unable to replay dead-letter job (not found, or its job "
+                    "is not in the modules the dashboard loaded - start "
+                    "'soniq dashboard' with --jobs-modules or SONIQ_JOBS_MODULES)."
+                ),
             )
         return {"message": "Dead-letter job replayed", "job_id": new_job_id}
 

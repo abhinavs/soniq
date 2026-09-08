@@ -204,7 +204,7 @@ Launch the web dashboard for monitoring jobs, queues, and workers.
 Requires `pip install soniq[dashboard]`.
 
 ```bash
-soniq dashboard [--host HOST] [--port PORT] [--reload]
+soniq dashboard [--host HOST] [--port PORT] [--reload] [--jobs-modules MODULES]
 ```
 
 | Flag | Type | Default | Description |
@@ -212,6 +212,7 @@ soniq dashboard [--host HOST] [--port PORT] [--reload]
 | `--host` | `str` | `127.0.0.1` | Network interface to bind to. Use `0.0.0.0` for all interfaces. |
 | `--port` | `int` | `6161` | Port number. |
 | `--reload` | flag | off | Auto-reload on code changes (development only). |
+| `--jobs-modules` | `str` | | Comma-separated modules to import on startup. Merged with `SONIQ_JOBS_MODULES`. Dead-letter replay needs the target job's registration loaded, so run the dashboard on the same instance your job modules registered on. |
 
 ```bash
 soniq dashboard --host 0.0.0.0 --port 6161
@@ -220,7 +221,10 @@ soniq dashboard --host 0.0.0.0 --port 6161
 Open `http://localhost:6161` in your browser.
 
 The dashboard is read-only by default. Set `SONIQ_DASHBOARD_WRITE_ENABLED=true`
-to enable replay, delete, and cancel actions.
+to enable replay, delete, and cancel actions. Dead-letter replay additionally
+needs your job modules loaded (`--jobs-modules` or `SONIQ_JOBS_MODULES`) so the
+replayed job's retry limits can be resolved, exactly like `soniq dead-letter
+replay`.
 
 
 ## scheduler
