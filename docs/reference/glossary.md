@@ -16,7 +16,7 @@ The string identifier under which a handler is registered. By default Soniq deri
 
 ## TaskRef
 
-A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref("billing.send_invoice", InvoiceArgs)`. Use it for cross-service producer/consumer setups where the producer should not own the handler implementation. See [cross-service jobs](../guides/cross-service-jobs.md).
+A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref(name="billing.send_invoice", args_model=InvoiceArgs)` - the arguments are keyword-only. Use it for cross-service producer/consumer setups where the producer should not own the handler implementation. See [cross-service jobs](../guides/cross-service-jobs.md).
 
 ## Worker
 
@@ -40,7 +40,7 @@ Periodic write each worker performs to `soniq_workers` to advertise liveness. If
 
 ## Dead-letter queue (DLQ)
 
-The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `app.dead_letter.list()`, `app.dead_letter.replay(job_id)`, or the `soniq dead-letter` CLI to inspect and recover them.
+The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `app.dead_letter.list_dead_letter_jobs()`, `app.dead_letter.replay(dead_letter_id)`, or the `soniq dead-letter` CLI to inspect and recover them. See the [dead-letter Python API](../api/dead-letter.md).
 
 ## Replay
 

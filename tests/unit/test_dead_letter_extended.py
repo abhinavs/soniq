@@ -26,6 +26,17 @@ class TestDeadLetterFilterDefaults:
         assert f.reasons == ["timeout"]
         assert f.limit == 50
 
+    def test_filter_is_kwarg_constructible(self):
+        """C4: DeadLetterFilter(limit=..., job_names=...) must work directly,
+        matching every other options object in the codebase."""
+        f = DeadLetterFilter(limit=10, job_names=["x"])
+        assert f.limit == 10
+        assert f.job_names == ["x"]
+        # Untouched fields keep their old defaults.
+        assert f.offset == 0
+        assert f.queues is None
+        assert f.has_been_resurrected is None
+
 
 class TestDeadLetterFilterSql:
     def test_filter_with_tags(self):

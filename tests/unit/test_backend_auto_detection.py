@@ -56,6 +56,24 @@ def test_no_config_defaults_to_sqlite():
             os.environ["SONIQ_DATABASE_URL"] = old
 
 
+def test_sqlite_url_scheme_is_stripped_to_a_path(tmp_path):
+    """C5: a sqlite:/// URL is accepted and the scheme prefix is stripped
+    before it reaches SQLiteBackend, instead of being passed through as a
+    bogus path that fails later with 'unable to open database file'."""
+    pytest.importorskip("aiosqlite")
+    from soniq.app import Soniq
+    from soniq.backends.sqlite import SQLiteBackend
+
+    abs_db = tmp_path / "test.db"
+    app = Soniq(database_url=f"sqlite:///{abs_db}")
+    assert isinstance(app._backend, SQLiteBackend)
+    assert app._backend._path == str(abs_db)
+
+    rel_app = Soniq(database_url="sqlite:///test.db")
+    assert isinstance(rel_app._backend, SQLiteBackend)
+    assert rel_app._backend._path == "test.db"
+
+
 def test_explicit_backend_overrides_auto_detection():
     """Explicit backend= param should override URL-based detection."""
     from soniq.app import Soniq

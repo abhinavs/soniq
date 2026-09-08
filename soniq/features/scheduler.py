@@ -661,6 +661,12 @@ class Scheduler:
             sched.run_count = new_run_count
             sched.last_job_id = actual_job_id
             sched.next_run = new_next_run
+            logger.info(
+                "Dispatched recurring job '%s' -> job %s (next run: %s)",
+                sched.name,
+                actual_job_id,
+                new_next_run.isoformat(),
+            )
             return
 
         # In-process store path. claim_and_advance is the CAS; if it fails
@@ -691,3 +697,9 @@ class Scheduler:
         sched.run_count = new_run_count
         sched.last_job_id = actual_job_id
         sched.next_run = new_next_run
+        logger.info(
+            "Dispatched recurring job '%s' -> job %s (next run: %s)",
+            sched.name,
+            actual_job_id,
+            new_next_run.isoformat(),
+        )

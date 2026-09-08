@@ -186,6 +186,14 @@ class Soniq:
         if database_url.startswith(("postgresql://", "postgres://")):
             return None
 
+        if database_url.startswith("sqlite:///"):
+            # Accept the sqlite:/// URL form the docs examples use. SQLiteBackend
+            # wants a bare filesystem path, so strip the scheme the same way
+            # postgres:// is special-cased above. Follows the sqlalchemy
+            # convention: "sqlite:///x.db" -> "x.db" (relative),
+            # "sqlite:////tmp/x.db" -> "/tmp/x.db" (absolute).
+            return SQLiteBackend(database_url[len("sqlite:///") :])
+
         if database_url.endswith((".db", ".sqlite", ".sqlite3")):
             return SQLiteBackend(database_url)
 

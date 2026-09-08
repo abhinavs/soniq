@@ -87,7 +87,9 @@ browsing and investigating.
 ## API endpoints
 
 The dashboard exposes a JSON API alongside the HTML interface. All endpoints are
-relative to the dashboard mount path.
+relative to the dashboard mount path. The running server also serves the full
+generated schema at `GET /openapi.json` (and Swagger UI at `/docs`) - that is
+the source of truth if this table drifts.
 
 ### Read endpoints
 
@@ -110,7 +112,10 @@ relative to the dashboard mount path.
 
 ### Write endpoints
 
-These return `403 Forbidden` unless `SONIQ_DASHBOARD_WRITE_ENABLED=true`.
+These return `403 Forbidden` with a `{"detail": "..."}` body explaining that
+writes are disabled unless `SONIQ_DASHBOARD_WRITE_ENABLED=true` is set. When
+write mode is on and the caller is not on loopback, `SONIQ_DASHBOARD_API_KEY`
+must also be supplied (via the `X-API-Key` header).
 
 | Method | Path | Description |
 |---|---|---|

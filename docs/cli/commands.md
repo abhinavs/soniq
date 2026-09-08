@@ -32,13 +32,14 @@ Soniq.
 Start a worker process that fetches and executes jobs.
 
 ```bash
-soniq worker [--concurrency N] [--queues QUEUES] [--run-once]
+soniq worker [--concurrency N] [--queues QUEUES] [--jobs-modules MODULES] [--run-once]
 ```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--concurrency` | `int` | `4` | Number of jobs the worker will run in parallel. |
 | `--queues` | `str` | all queues | Comma-separated list of queue names to process. |
+| `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (the env var sets the base; this flag adds more) for per-worker overrides. |
 | `--run-once` | flag | off | Process all available jobs and exit. |
 
 Requires `SONIQ_JOBS_MODULES` to be set so the worker can discover and import
@@ -140,11 +141,17 @@ as the audit trail; a new `soniq_jobs` row is created with a new UUID
 and `resurrection_count` is incremented.
 
 ```bash
-soniq dead-letter replay <job-id> [<job-id> ...]
+soniq dead-letter replay <job-id> [<job-id> ...] --jobs-modules myapp.tasks
 soniq dead-letter replay --all                       # interactive prompt for >= 5 jobs
 soniq dead-letter replay --all --dry-run             # report count + sample, no changes
 soniq dead-letter replay --all --yes                 # skip the confirmation prompt
 ```
+
+`replay` needs your job modules loaded to resolve the target job's retry
+limits, so it takes `--jobs-modules` (merged with `SONIQ_JOBS_MODULES`,
+same as `worker`/`scheduler`). Set one or the other; `replay` exits
+non-zero if neither is provided. The read-only actions (`list`, `delete`,
+`cleanup`, `export`) do not need it.
 
 `replay --all` is a footgun: if the DLQ filled up because of a bug that
 has not been fixed, replaying everything just runs the same jobs back
@@ -187,6 +194,7 @@ soniq dead-letter export --format csv --output dead_letter.csv
 | `--yes`, `-y` | flag | off | Skip the interactive confirmation for bulk `replay --all` / `delete --all`. Required in non-interactive shells. |
 | `--format` | `csv \| json` | `csv` | Export format. |
 | `--output` | `str` | | Output file path (required for `export`). |
+| `--jobs-modules` | `str` | | Comma-separated modules to import (for `replay`). Merged with `SONIQ_JOBS_MODULES`. |
 
 
 ## dashboard
@@ -221,12 +229,13 @@ Start the recurring job scheduler. It checks for due `@periodic` jobs and
 enqueues them.
 
 ```bash
-soniq scheduler [--check-interval SECONDS]
+soniq scheduler [--check-interval SECONDS] [--jobs-modules MODULES]
 ```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--check-interval` | `int` | `60` | Seconds between checks for due recurring jobs. |
+| `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (adds to, does not replace). The scheduler must import your `@app.periodic` definitions to know what to fire. |
 
 ```bash
 # Start the scheduler
@@ -250,3 +259,32 @@ soniq migrate-status
 
 Output lists each migration with its status (applied or pending). If migrations
 are pending, it tells you to run `soniq setup`.
+
+
+## tasks-check
+
+Compare the `TaskRef` declarations in a cross-service stub package against
+`soniq_task_registry` -- the table every worker populates with its registered
+task names on startup. Useful as a CI gate before a deploy: if a producer's
+stubs and the consumer's actual handlers have drifted apart, the check fails
+before the bad enqueue reaches production.
+
+```bash
+soniq tasks-check <package> [--database-url URL]
+```
+
+`<package>` is a stub package directory or a dotted module path holding the
+`task_ref(...)` declarations. Requires `SONIQ_DATABASE_URL` (or `--database-url`)
+to read the registry table.
+
+It reports drift in **both** directions and exits non-zero if either is
+non-empty:
+
+- **TaskRef with no registered task** -- the stub package declares a name that
+  no running worker has registered. Either the consumer has not deployed the
+  handler yet, or the name is misspelled in the stub.
+- **Registered task with no TaskRef** -- a worker registered a task name that
+  the stub package does not declare. The stub is stale, or the handler was
+  renamed without updating the producers.
+
+On a clean match it prints an `OK` line and exits `0`.

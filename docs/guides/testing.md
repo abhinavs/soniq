@@ -179,6 +179,14 @@ async def clean_slate(eq):
 
 When you need to test against a real SQL database but don't want to run PostgreSQL in CI:
 
+```bash
+pip install soniq[sqlite]
+```
+
+The base `pip install soniq` does not pull in the SQLite driver. Without the
+extra, `Soniq(backend="sqlite", ...)` raises an `ImportError` naming
+`soniq[sqlite]`.
+
 ```python
 import pytest
 from soniq import Soniq
@@ -190,6 +198,12 @@ async def eq(tmp_path):
     yield app
     await app.close()
 ```
+
+Pass a **bare file path** (`"test.db"`, `str(tmp_path / "test.db")`), not a
+`sqlite:///` URL. Soniq also accepts the `sqlite:///relative.db` /
+`sqlite:////abs/path.db` URL form and strips the scheme, but the bare path is
+the form the rest of the docs use. The same goes for the memory backend:
+`Soniq(backend="memory")`, no URL.
 
 SQLite gives you real SQL semantics (constraints, transactions) without external dependencies. Use `tmp_path` so each test gets a fresh database file that's automatically cleaned up.
 

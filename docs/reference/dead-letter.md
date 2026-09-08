@@ -64,7 +64,8 @@ soniq dead-letter export --format csv --output dead_jobs.csv
 
 The dead-letter API is reached through your `Soniq` instance:
 `app.dead_letter.<method>()`. The handle is constructed lazily on first
-access and cached on the instance.
+access and cached on the instance. Full method and type reference:
+[Dead-letter queue Python API](../api/dead-letter.md).
 
 ```python
 from soniq import Soniq
@@ -99,10 +100,11 @@ print(f"Oldest job: {stats.oldest_job_age_hours:.1f} hours ago")
 ### Filtered queries
 
 ```python
-f = DeadLetterFilter()
-f.job_names = ["myapp.tasks.send_welcome_email"]
-f.reasons = ["max_retries_exceeded"]
-f.limit = 50
+f = DeadLetterFilter(
+    job_names=["myapp.tasks.send_welcome_email"],
+    reasons=["max_retries_exceeded"],
+    limit=50,
+)
 
 jobs = await app.dead_letter.list_dead_letter_jobs(f)
 ```
@@ -110,8 +112,7 @@ jobs = await app.dead_letter.list_dead_letter_jobs(f)
 ### Bulk operations
 
 ```python
-f = DeadLetterFilter()
-f.job_names = ["myapp.tasks.sync_inventory"]
+f = DeadLetterFilter(job_names=["myapp.tasks.sync_inventory"])
 
 new_job_ids = await app.dead_letter.bulk_replay(
     f, reset_attempts=True, new_max_attempts=5

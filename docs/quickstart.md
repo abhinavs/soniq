@@ -10,6 +10,8 @@ pip install soniq
 
 You will need a running PostgreSQL. If you do not have one handy, `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16` will do.
 
+> Just want to try Soniq without Postgres? `pip install soniq[sqlite]`, then pass a bare file path instead of a URL: `Soniq(database_url="dev.db")`. SQLite and the in-memory backend (`Soniq(backend="memory")`) are for local dev and tests only - see the [testing guide](guides/testing.md#sqlite-for-integration-tests) and the [Backend](reference/glossary.md#backend) glossary entry.
+
 ## 2. Define a job
 
 ```python

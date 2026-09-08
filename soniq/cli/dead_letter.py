@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import sys
 
+from soniq.discovery import discover_and_import_modules
 from soniq.features.dead_letter import DeadLetterFilter
 
-from ._context import cli_app
-from ._helpers import database_url_argument
+from ._context import cli_app, execution_app
+from ._helpers import database_url_argument, resolve_jobs_modules
 
 # Bulk replay/delete prompts above this threshold unless --yes is passed.
 # Below it, single-digit operations are treated as deliberate and run silently.
@@ -57,6 +58,16 @@ def add_dead_letter_cmd(subparsers) -> None:
         help="Export format",
     )
     parser.add_argument("--output", help="Output file path")
+    parser.add_argument(
+        "--jobs-modules",
+        default=None,
+        help=(
+            "Comma-separated list of modules to import on startup. Merged with "
+            "SONIQ_JOBS_MODULES (the env var sets the base; this flag adds more) "
+            "for per-worker overrides. See docs/getting-started/installation.md. "
+            "Required for ``replay`` so the target job's registration is loaded."
+        ),
+    )
     database_url_argument(parser)
     parser.set_defaults(func=handle_dead_letter)
 
@@ -80,7 +91,27 @@ def _confirm(prompt: str) -> bool:
 
 
 async def handle_dead_letter(args) -> int:
-    async with cli_app(args) as app:
+    # ``replay`` re-inserts a soniq_jobs row and needs the target job's
+    # registration to resolve max_attempts, so it must run on the same
+    # instance the job modules registered on (like worker/scheduler). The
+    # read-only actions (list/delete/cleanup/export) don't touch the
+    # registry, so they keep the lighter cli_app path.
+    if args.action == "replay":
+        modules = resolve_jobs_modules(args)
+        if not modules:
+            print(
+                "Error: 'replay' needs your job modules loaded to know the "
+                "target job's retry limits. Set SONIQ_JOBS_MODULES or pass "
+                "--jobs-modules.",
+                file=sys.stderr,
+            )
+            return 1
+        discover_and_import_modules(modules)
+        ctx = execution_app(args, modules)
+    else:
+        ctx = cli_app(args)
+
+    async with ctx as app:
         dead_letter = app.dead_letter
 
         action = args.action
@@ -125,9 +156,19 @@ async def handle_dead_letter(args) -> int:
                 print(f"Replayed {len(replayed)} of {count} dead-letter job(s).")
                 return 0
             if args.job_ids:
+                rc = 0
                 for job_id in args.job_ids:
-                    await dead_letter.replay(job_id)
-                return 0
+                    new_job_id = await dead_letter.replay(job_id)
+                    if new_job_id:
+                        print(f"Replayed {job_id} as {new_job_id}")
+                    else:
+                        print(
+                            f"Could not replay {job_id} (not found, or its job "
+                            "is not in the loaded modules).",
+                            file=sys.stderr,
+                        )
+                        rc = 1
+                return rc
             return 1
 
         if action == "cleanup":

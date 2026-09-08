@@ -10,7 +10,8 @@ enqueue + bookkeeping) is exercised against a real Postgres in
 writer so these unit tests don't try to reproduce the race.
 """
 
-from datetime import timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -110,6 +111,35 @@ async def test_list_filter_by_status(app):
     paused = await app.scheduler.list(status="paused")
     assert {s["name"] for s in active} == {"a"}
     assert {s["name"] for s in paused} == {"b"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_emits_log_line(app, caplog):
+    """C2: the scheduler logs an observable line each time it enqueues a due
+    recurring job (schedule name, new job UUID, computed next run)."""
+
+    @app.job(name="testbed.heartbeat")
+    async def heartbeat():
+        return None
+
+    await app.scheduler.add(heartbeat, every=timedelta(seconds=60))
+
+    # Force the schedule due: rewind next_run into the past.
+    await app.scheduler._ensure_loaded()
+    sched = app.scheduler._cache["testbed.heartbeat"]
+    sched.next_run = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    with caplog.at_level(logging.INFO, logger="soniq.features.scheduler"):
+        await app.scheduler._tick()
+
+    dispatch_lines = [
+        r.message for r in caplog.records if "Dispatched recurring job" in r.message
+    ]
+    assert len(dispatch_lines) == 1
+    assert "testbed.heartbeat" in dispatch_lines[0]
+    assert "next run:" in dispatch_lines[0]
+    assert sched.last_job_id is not None
+    assert sched.last_job_id in dispatch_lines[0]
 
 
 @pytest.mark.asyncio

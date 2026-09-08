@@ -88,19 +88,24 @@ class DeadLetterStats:
     resurrection_success_rate: float
 
 
+@dataclass
 class DeadLetterFilter:
-    """Filter for dead letter queue queries"""
+    """Filter for dead letter queue queries.
 
-    def __init__(self):
-        self.job_names: Optional[List[str]] = None
-        self.queues: Optional[List[str]] = None
-        self.reasons: Optional[List[str]] = None
-        self.date_from: Optional[datetime] = None
-        self.date_to: Optional[datetime] = None
-        self.tags: Optional[Dict[str, str]] = None
-        self.has_been_resurrected: Optional[bool] = None
-        self.limit: int = 1000
-        self.offset: int = 0
+    Kwarg-constructible like every other options object in this codebase
+    (``DeadLetterFilter(limit=10, job_names=["x"])``); attribute assignment
+    after a no-arg construction still works.
+    """
+
+    job_names: Optional[List[str]] = None
+    queues: Optional[List[str]] = None
+    reasons: Optional[List[str]] = None
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    tags: Optional[Dict[str, str]] = None
+    has_been_resurrected: Optional[bool] = None
+    limit: int = 1000
+    offset: int = 0
 
     def to_sql_conditions(self) -> Tuple[List[str], List[Any]]:
         """Convert filter to SQL WHERE conditions and parameters"""

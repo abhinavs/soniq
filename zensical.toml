@@ -45,6 +45,7 @@ nav = [
       { "Jobs" = "api/jobs.md" },
       { "Worker" = "api/worker.md" },
       { "Hooks" = "api/hooks.md" },
+      { "Dead-letter queue" = "api/dead-letter.md" },
     ] },
     { "CLI" = "cli/commands.md" },
     { "Dashboard" = "dashboard/overview.md" },

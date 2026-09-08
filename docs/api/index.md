@@ -6,3 +6,4 @@ Complete reference for Soniq's Python API.
 - [Jobs](jobs.md) — `@job` decorator, `enqueue()`, `schedule()`, `JobContext`, `JobStatus`
 - [Worker](worker.md) — `run_worker()`, worker configuration, concurrency
 - [Hooks](hooks.md) — `@before_job`, `@after_job`, `@on_error` middleware
+- [Dead-letter queue](dead-letter.md) — the `app.dead_letter` service: list, replay, bulk ops, stats
