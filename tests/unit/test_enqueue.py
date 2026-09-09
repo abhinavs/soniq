@@ -364,6 +364,16 @@ async def test_transactional_enqueue_unsupported_on_memory_backend(lenient_app):
         )
 
 
+@pytest.mark.asyncio
+async def test_backend_acquire_unsupported_gives_same_error(lenient_app):
+    """The documented pattern `async with app.backend.acquire() as conn` must
+    fail with the same helpful message on a non-Postgres backend, not a bare
+    AttributeError."""
+    with pytest.raises(ValueError, match="Transactional enqueue"):
+        async with lenient_app.backend.acquire():
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Strict-mode registry-table boundary (load-bearing)
 #

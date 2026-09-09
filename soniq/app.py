@@ -24,6 +24,7 @@ import asyncpg
 from pydantic import ValidationError
 
 from .backends import StorageBackend
+from .backends.helpers import no_transactional_enqueue
 from .backends.postgres import PostgresBackend
 from .backends.postgres.migration_runner import MigrationRunner
 from .backends.sqlite import SQLiteBackend
@@ -683,10 +684,7 @@ class Soniq:
                     producer_id=producer_id,
                 )
                 return txn_id or job_id
-            raise ValueError(
-                f"Transactional enqueue (connection=) is not supported by "
-                f"{type(self._backend).__name__}. Use PostgresBackend for this feature."
-            )
+            no_transactional_enqueue(type(self._backend).__name__)
 
         result_id = await self._backend.create_job(
             job_id=job_id,

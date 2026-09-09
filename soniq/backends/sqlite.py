@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from soniq.backends.helpers import no_transactional_enqueue
 from soniq.types import QueueStats
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,12 @@ class SQLiteBackend:
     @property
     def supports_advisory_locks(self) -> bool:
         return False
+
+    def acquire(self):
+        # Postgres-only. Defined here so the documented transactional-enqueue
+        # pattern (`async with app.backend.acquire() as conn`) fails with the
+        # same clear message as enqueue(connection=...) instead of AttributeError.
+        no_transactional_enqueue(type(self).__name__)
 
     async def initialize(self) -> None:
         self._conn = await aiosqlite.connect(self._path)
