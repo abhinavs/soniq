@@ -38,16 +38,24 @@ async def handle_dashboard(args) -> int:
     # on the job-module instance (same reason worker/scheduler do) so that path
     # works; read-only endpoints are unaffected either way.
     #
-    # An explicit --database-url is the exception: the dashboard is a monitoring
-    # tool and pointing it at an arbitrary database is a legitimate use, so honour
-    # the flag over module discovery (replay then only works for that database's
-    # own registered jobs, which is inherent).
+    # --jobs-modules and --database-url answer different questions (which job
+    # registry vs. which database) and are not mutually exclusive. If the
+    # operator passes --jobs-modules explicitly, honour it (like worker/scheduler)
+    # and let execution_app reconcile any --database-url against the discovered
+    # instance - it errors loudly if they point at different databases.
+    #
+    # A bare --database-url with no explicit flag is the monitoring case: pointing
+    # the dashboard at an arbitrary database is legitimate, and a command-line
+    # --database-url beats job modules that come only from the ambient
+    # SONIQ_JOBS_MODULES env var. Replay then only works for that database's own
+    # registered jobs, which is inherent.
     modules = resolve_jobs_modules(args)
-    if getattr(args, "database_url", None):
-        ctx = cli_app(args)
-    elif modules:
+    explicit_jobs_flag = bool(getattr(args, "jobs_modules", None))
+    if modules and (explicit_jobs_flag or not getattr(args, "database_url", None)):
         discover_and_import_modules(modules)
         ctx = execution_app(args, modules)
+    elif getattr(args, "database_url", None):
+        ctx = cli_app(args)
     else:
         print_status(
             "No job modules configured (set SONIQ_JOBS_MODULES or pass "
