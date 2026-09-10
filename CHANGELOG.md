@@ -4,6 +4,19 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4]
+
+### Added
+
+- **`--jobs-modules` on `soniq dashboard` and `soniq dead-letter`.** Dead-letter replay re-inserts a `soniq_jobs` row and needs the target job's registration loaded to resolve its retry limits, so it now runs on the same instance your job modules registered on (like `worker` / `scheduler`). `soniq dead-letter replay` fails fast with guidance when no modules are configured, and `soniq dashboard` warns at startup. The flag merges with `SONIQ_JOBS_MODULES` and can be combined with `--database-url`.
+- **`sqlite:///` URLs** are now accepted in `SONIQ_DATABASE_URL` and `--database-url`, following the SQLAlchemy convention (`sqlite:///x.db` relative, `sqlite:////tmp/x.db` absolute).
+- **Scheduler logs each dispatched recurring job** at INFO: job name, resulting job id, and next run time.
+
+### Fixed
+
+- **`soniq dead-letter replay` reports per-job results** (`Replayed <id> as <new-id>`) and exits non-zero when a job can't be replayed, instead of silently returning success.
+- **SQLite and in-memory backends raise a clear error on transactional enqueue** (`app.backend.acquire()` or `enqueue(..., connection=...)`) pointing at the PostgreSQL backend, instead of an opaque `AttributeError`.
+
 ## [0.0.3]
 
 ### Fixed
