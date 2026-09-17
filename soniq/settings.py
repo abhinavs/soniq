@@ -307,6 +307,17 @@ class SoniqSettings(BaseSettings):
         return v
 
 
+class JobsModulesSettings(BaseSettings):
+    """Reads ``SONIQ_JOBS_MODULES`` on its own."""
+
+    model_config = SettingsConfigDict(**SoniqSettings.model_config)
+
+    jobs_modules: str = Field(
+        default="",
+        description=SoniqSettings.model_fields["jobs_modules"].description,
+    )
+
+
 # Global settings instance
 _settings: Optional[SoniqSettings] = None
 
@@ -339,6 +350,14 @@ def get_settings(
             raise ValueError(f"Invalid Soniq configuration: {e}")
 
     return _settings
+
+
+def get_jobs_modules() -> str:
+    """Return the current ``SONIQ_JOBS_MODULES`` value, read fresh."""
+    try:
+        return JobsModulesSettings().jobs_modules
+    except ValidationError as e:
+        raise ValueError(f"Invalid SONIQ_JOBS_MODULES configuration: {e}")
 
 
 def reload_settings(config_file: Optional[Path] = None) -> SoniqSettings:

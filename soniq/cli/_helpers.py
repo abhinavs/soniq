@@ -21,14 +21,13 @@ flag spelt the same way everywhere.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Optional
 
 from pydantic import ValidationError
 
 from soniq import Soniq
 from soniq.discovery import merge_module_lists
-from soniq.settings import get_settings
+from soniq.settings import get_jobs_modules
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ def resolve_jobs_modules(args: Any) -> list[str]:
     so the env-var/flag precedence stays spelt the same in one place.
     """
     return merge_module_lists(
-        get_settings().jobs_modules or os.getenv("SONIQ_JOBS_MODULES", ""),
+        get_jobs_modules(),
         getattr(args, "jobs_modules", None) or "",
     )
 
