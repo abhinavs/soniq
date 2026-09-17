@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from soniq import Soniq
 from soniq.discovery import merge_module_lists
+from soniq.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def resolve_jobs_modules(args: Any) -> list[str]:
     so the env-var/flag precedence stays spelt the same in one place.
     """
     return merge_module_lists(
-        os.getenv("SONIQ_JOBS_MODULES", ""),
+        get_settings().jobs_modules or os.getenv("SONIQ_JOBS_MODULES", ""),
         getattr(args, "jobs_modules", None) or "",
     )
 
