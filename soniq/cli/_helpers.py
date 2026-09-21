@@ -24,6 +24,7 @@ import logging
 import os
 from typing import Any, Optional
 
+from dotenv import dotenv_values
 from pydantic import ValidationError
 
 from soniq import Soniq
@@ -48,8 +49,11 @@ def resolve_jobs_modules(args: Any) -> list[str]:
     ``soniq worker`` and ``soniq scheduler`` both resolve their modules this way,
     so the env-var/flag precedence stays spelt the same in one place.
     """
+    raw = os.environ.get("SONIQ_JOBS_MODULES")
+    if raw is None:
+        raw = dotenv_values(".env").get("SONIQ_JOBS_MODULES", "")
     return merge_module_lists(
-        os.getenv("SONIQ_JOBS_MODULES", ""),
+        raw or "",
         getattr(args, "jobs_modules", None) or "",
     )
 
