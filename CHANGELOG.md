@@ -4,6 +4,12 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5]
+
+### Added
+
+- **`SONIQ_JOBS_MODULES` can now be set in a `.env` file**, not just exported as an environment variable. Resolution order is unchanged otherwise: an exported env var still wins over `.env`, and `--jobs-modules` still appends on top. The `.env` file is read from the current working directory, so it picks up the operator's project file rather than one bundled with the package.
+
 ## [0.0.4]
 
 ### Added

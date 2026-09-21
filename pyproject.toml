@@ -41,6 +41,7 @@ dependencies = [
   # without a separate extra.
   "croniter>=1.4.0",
   "prometheus-client>=0.15.0",
+  "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
