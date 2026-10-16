@@ -47,7 +47,7 @@ async with engine.begin() as conn:
 
 Rules:
 
-- **Use the asyncpg driver.** Create the engine with a `postgresql+asyncpg://` URL. Other drivers raise a `SoniqError`. Support for psycopg is planned.
+- **Use the asyncpg or psycopg 3 driver.** Create the engine with a `postgresql+asyncpg://` or `postgresql+psycopg://` URL. Other drivers raise a `SoniqError`.
 - **Open a transaction first.** Call `enqueue()` inside `async with db.begin():` or after a statement that started one. A session with no active transaction raises a `SoniqError`.
 - **SQLAlchemy stays in charge.** Soniq does not open or commit a transaction. If SQLAlchemy rolls back, the job is removed too.
 - **Use the same database.** The engine must point at the database that holds the Soniq tables.
@@ -150,6 +150,21 @@ async def create_order(product_id: int, quantity: int):
 This is the cleanest pattern when you have an existing pool: there is no extraction step and no second pool to size. Soniq is a passenger on a connection your app already owned.
 
 > Both pools must point at the **same Postgres database**. Soniq's job tables and your application tables share one database; the connection just has to be in a transaction on that database.
+
+## psycopg 3 connections
+
+You can pass a `psycopg.AsyncConnection` too. Soniq writes the job on that connection and does not commit. You commit or roll back as usual:
+
+```python
+import psycopg
+
+async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+    await conn.execute("INSERT INTO orders (id, total) VALUES (%s, %s)", (order_id, total))
+    await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
+    await conn.commit()
+```
+
+Install the driver with `pip install "soniq[psycopg]"`.
 
 ## Pattern 4: Tortoise ORM (still supported)
 

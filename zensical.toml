@@ -8,7 +8,11 @@ site_dir = "site"
 nav = [
   { "Home" = "index.md" },
   { "Why Soniq?" = "why-soniq.md" },
+  { "Compare tools" = "compare.md" },
+  { "Benchmarks" = "benchmarks.md" },
+  { "Stability and versioning" = "stability.md" },
   { "Quickstart" = "quickstart.md" },
+  { "Installation" = "getting-started/installation.md" },
   { "Tutorial" = [
     { "1. Defining jobs" = "tutorial/01-defining-jobs.md" },
     { "2. Running workers" = "tutorial/02-running-workers.md" },
@@ -51,6 +55,7 @@ nav = [
     { "Dashboard" = "dashboard/overview.md" },
     { "Dead-letter queue" = "reference/dead-letter.md" },
     { "Glossary" = "reference/glossary.md" },
+    { "Deprecations" = "deprecations.md" },
   ] },
   { "Production" = [
     { "Going to production" = "production/going-to-production.md" },
@@ -63,6 +68,7 @@ nav = [
     ] },
     { "PostgreSQL tuning" = "production/postgres.md" },
     { "Reliability" = "production/reliability.md" },
+    { "Migrations with Alembic" = "production/migrations.md" },
   ] },
   { "Troubleshooting" = "troubleshooting.md" },
 ]
