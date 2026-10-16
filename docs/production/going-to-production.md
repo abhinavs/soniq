@@ -13,7 +13,7 @@ A copy-into-the-ticket checklist:
 - [ ] Process manager sends `SIGTERM` for shutdown, with `terminationGracePeriodSeconds` / `TimeoutStopSec` >= longest job timeout
 - [ ] Handlers are idempotent (safe to run more than once - upserts, dedup keys, idempotency tokens)
 - [ ] A metrics sink wired up (Prometheus or your own `MetricsSink`)
-- [ ] If you use `@app.periodic`, a separate `soniq scheduler` process is running
+- [ ] If you use `@soniq.periodic`, a separate `soniq scheduler` process is running
 - [ ] `SONIQ_POOL_MAX_SIZE >= concurrency + SONIQ_POOL_HEADROOM`, and `max_connections` on the database has headroom for `num_workers * pool_size`
 - [ ] Per-job timeouts set for slow jobs; the global default is 300s
 
@@ -26,7 +26,7 @@ The rest of this page explains each item. The [common production mistakes](#comm
 | Variable | Example | Why |
 |---|---|---|
 | `SONIQ_DATABASE_URL` | `postgresql://user:pass@host/db` | Postgres connection string. |
-| `SONIQ_JOBS_MODULES` | `myapp.jobs,myapp.billing` | Modules the worker imports on startup so `@app.job` decorators run. Workers cannot process jobs they cannot import. |
+| `SONIQ_JOBS_MODULES` | `myapp.jobs,myapp.billing` | Modules the worker imports on startup so `@soniq.job` decorators run. Workers cannot process jobs they cannot import. |
 
 ### Run `soniq setup` only once per deploy
 
@@ -58,12 +58,12 @@ Wire a metrics sink:
 from soniq import Soniq
 from soniq.metrics import PrometheusMetricsSink
 
-app = Soniq(metrics_sink=PrometheusMetricsSink())
+soniq = Soniq(metrics_sink=PrometheusMetricsSink())
 ```
 
 Mount `/metrics` from `prometheus_client.make_asgi_app()` on whatever HTTP surface you scrape, or run `soniq dashboard` and point Grafana at its `/api/metrics`.
 
-### Run `soniq scheduler` if you use `@app.periodic`
+### Run `soniq scheduler` if you use `@soniq.periodic`
 
 The CLI worker (`soniq worker`) does **not** evaluate due recurring jobs. Run a separate `soniq scheduler` process. Multiple instances coordinate via a Postgres advisory lock; runners-up wait for the leader.
 
@@ -79,7 +79,7 @@ Total Postgres load is `num_worker_processes * SONIQ_POOL_MAX_SIZE`. Confirm `ma
 
 ### Per-job timeouts
 
-The global default is `SONIQ_JOB_TIMEOUT=300` seconds. Override for slow jobs with `@app.job(timeout=600)`; set to `0` to disable per-job. Without a timeout, a hung handler ties up a concurrency slot until the worker restarts.
+The global default is `SONIQ_JOB_TIMEOUT=300` seconds. Override for slow jobs with `@soniq.job(timeout=600)`; set to `0` to disable per-job. Without a timeout, a hung handler ties up a concurrency slot until the worker restarts.
 
 ## Common production mistakes
 
@@ -89,7 +89,7 @@ The global default is `SONIQ_JOB_TIMEOUT=300` seconds. Override for slow jobs wi
 - **Worker host does not have your job code installed.** `SONIQ_JOBS_MODULES=myapp.jobs` is an instruction to *import* `myapp.jobs`, not a way to ship code. Bake the code into the worker image.
 - **PgBouncer in transaction-pooling mode.** Breaks `LISTEN/NOTIFY` (workers fall back to polling) and breaks the scheduler advisory lock. Use session pooling for worker and scheduler connections.
 - **`SONIQ_DATABASE_URL` divergence between `setup` and `worker`.** `setup` writes to URL A; the worker reads URL B; the worker logs "table does not exist."
-- **Forgetting `await` after switching from Celery.** Celery's `.delay()` is synchronous. Soniq's `enqueue(...)` is a coroutine. A bare `app.enqueue(send_email, ...)` schedules nothing. Treat the `RuntimeWarning: coroutine was never awaited` warning as an error in CI.
+- **Forgetting `await` after switching from Celery.** Celery's `.delay()` is synchronous. Soniq's `enqueue(...)` is a coroutine. A bare `soniq.enqueue(send_email, ...)` schedules nothing. Treat the `RuntimeWarning: coroutine was never awaited` warning as an error in CI.
 - **Resurrecting a full DLQ without fixing the cause.** `soniq dead-letter replay --all` re-runs every dead-letter job. Use `--dry-run` first, fix the underlying bug, then replay.
 
 ## Next steps

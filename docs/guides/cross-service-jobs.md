@@ -72,7 +72,7 @@ deployment environment.
 
 ## Naming conventions
 
-Names are protocol identifiers. By default `@app.job` derives a name
+Names are protocol identifiers. By default `@soniq.job` derives a name
 from `f"{module}.{qualname}"` (Celery-style) - that's fine for
 single-repo usage. Cross-service deployments should pass `name=`
 explicitly so the wire identifier doesn't rot when functions get
@@ -112,13 +112,13 @@ The handler can run more than once because of:
 
 - Producer retries after a network blip
 - Worker crashes mid-execution (the row is requeued)
-- Manual replay via `app.dead_letter.replay(...)` or the dashboard
+- Manual replay via `soniq.dead_letter.replay(...)` or the dashboard
 
 **Handlers must be idempotent.** The recommended pattern is an
 application-level idempotency key threaded through `dedup_key`:
 
 ```python
-@app.job(name="billing.invoices.send.v2", validate=InvoiceArgs)
+@soniq.job(name="billing.invoices.send.v2", validate=InvoiceArgs)
 async def send_invoice(order_id: str, customer: str):
     if await invoice_already_sent(order_id):
         return  # idempotent short-circuit

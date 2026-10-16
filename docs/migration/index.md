@@ -15,14 +15,14 @@ The cost is real, though, and we want to be honest about it:
 
 If those tradeoffs are acceptable, pick the guide that matches your current stack:
 
-- [Migrate from Celery](from-celery.md) - the most common path. Concept-by-concept mapping (`@app.task` -> `@app.job()`, Beat -> the scheduler, result backend -> `soniq_jobs.result`), what Celery has that Soniq does not (chains/chords, pickle, `bind=True`), and a module-at-a-time migration sequence.
-- [Migrate from RQ](from-rq.md) - shorter. RQ's surface is small, so the mapping is mostly mechanical: registries collapse into a four-state `status` column, `Retry(...)` becomes `@app.job(retries=...)`, and the workers/scheduler/dashboard are all built in instead of separate packages.
+- [Migrate from Celery](from-celery.md) - the most common path. Concept-by-concept mapping (`@soniq.task` -> `@soniq.job()`, Beat -> the scheduler, result backend -> `soniq_jobs.result`), what Celery has that Soniq does not (chains/chords, pickle, `bind=True`), and a module-at-a-time migration sequence.
+- [Migrate from RQ](from-rq.md) - shorter. RQ's surface is small, so the mapping is mostly mechanical: registries collapse into a four-state `status` column, `Retry(...)` becomes `@soniq.job(retries=...)`, and the workers/scheduler/dashboard are all built in instead of separate packages.
 
 ## What's the same on both paths
 
 A few things are worth saying once rather than twice:
 
-- **Both migrations are rewrites at the call sites.** Soniq's API surface is intentionally smaller than Celery's; the mapping below is the supported path. Plan to update each `delay(...)` / `q.enqueue(...)` call to `await app.enqueue(...)` rather than aliasing the old surface.
+- **Both migrations are rewrites at the call sites.** Soniq's API surface is intentionally smaller than Celery's; the mapping below is the supported path. Plan to update each `delay(...)` / `q.enqueue(...)` call to `await soniq.enqueue(...)` rather than aliasing the old surface.
 - **`soniq setup` is idempotent.** Run it once per database; safe to re-run on every deploy.
 - **Soniq and your old queue can coexist.** They share no state. Run them side by side, migrate one job module at a time, and only stop the old workers once their queue is drained.
 - **Sync handlers still work.** Both Celery and RQ are sync-first. Soniq prefers `async def` but runs sync handlers on a bounded thread pool. You can port to async incrementally.

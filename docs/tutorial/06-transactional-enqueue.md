@@ -29,13 +29,13 @@ The standard fix is the [outbox pattern](https://microservices.io/patterns/data/
 Soniq's job table lives in your Postgres. Pass the same connection you are using for your business writes, and the job row joins your transaction:
 
 ```python
-async with app.backend.acquire() as conn:
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         order_id = await conn.fetchval(
             "INSERT INTO orders (items) VALUES ($1) RETURNING id",
             items,
         )
-        await app.enqueue(send_invoice, connection=conn, order_id=order_id)
+        await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
 If the transaction commits, both the order and the job exist. If it rolls back, neither does. There is no window where one is real and the other is not.

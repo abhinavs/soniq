@@ -21,7 +21,7 @@ Common patterns:
 **Sent flags.** Before sending an email or webhook, check a flag in your database. Set the flag inside the same transaction as the action.
 
 ```python
-@app.job()
+@soniq.job()
 async def send_welcome_email(user_id: int):
     user = await db.get(user_id)
     if user.welcome_email_sent:
@@ -39,7 +39,7 @@ async def send_welcome_email(user_id: int):
 When a job raises an exception, Soniq retries it automatically up to `max_retries` (default 3). Each retry respects the configured delay.
 
 ```python
-@app.job(max_retries=5, timeout=120)
+@soniq.job(max_retries=5, timeout=120)
 async def call_external_api(payload: dict):
     response = await httpx.post("https://api.example.com", json=payload)
     response.raise_for_status()
@@ -72,7 +72,7 @@ SONIQ_HEARTBEAT_TIMEOUT=120   # 2 minutes
 SONIQ_CLEANUP_INTERVAL=60     # check every minute
 ```
 
-The default 300-second job timeout also prevents most stuck-job scenarios caused by hung code (infinite loops, dead network calls). Override per-job with `@app.job(timeout=600)`.
+The default 300-second job timeout also prevents most stuck-job scenarios caused by hung code (infinite loops, dead network calls). Override per-job with `@soniq.job(timeout=600)`.
 
 ### Manual recovery
 

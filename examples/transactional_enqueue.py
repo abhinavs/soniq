@@ -20,10 +20,10 @@ from soniq import Soniq
 
 DATABASE_URL = "postgresql://postgres@localhost/soniq"
 
-soniq_app = Soniq(database_url=DATABASE_URL)
+soniq = Soniq(database_url=DATABASE_URL)
 
 
-@soniq_app.job(name="send_welcome_email", queue="emails", retries=3)
+@soniq.job(name="send_welcome_email", queue="emails", retries=3)
 async def send_welcome_email(user_id: int, email: str):
     """Send a welcome email to a newly registered user."""
     print(f"Sending welcome email to {email} (user {user_id})")
@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 @asynccontextmanager
 async def lifespan(app):
     app.state.pool = await asyncpg.create_pool(DATABASE_URL)
-    await soniq_app.setup()
+    await soniq.setup()
 
     async with app.state.pool.acquire() as conn:
         await conn.execute(
@@ -56,7 +56,7 @@ async def lifespan(app):
     yield
 
     await app.state.pool.close()
-    await soniq_app.close()
+    await soniq.close()
 
 
 app = FastAPI(title="Soniq Transactional Enqueue Demo", lifespan=lifespan)
@@ -79,7 +79,7 @@ async def create_user(req: CreateUserRequest):
             )
             user_id = row["id"]
 
-            job_id = await soniq_app.enqueue(
+            job_id = await soniq.enqueue(
                 "send_welcome_email",
                 args={"user_id": user_id, "email": req.email},
                 connection=conn,

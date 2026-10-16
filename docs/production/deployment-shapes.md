@@ -14,9 +14,9 @@ the canonical task name is the contract.
 ```python
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://...")
+soniq = Soniq(database_url="postgresql://...")
 
-await app.enqueue("billing.send", args={"order_id": 7})
+await soniq.enqueue("billing.send", args={"order_id": 7})
 ```
 
 If a producer accidentally calls `run_worker(...)`, it polls the queue
@@ -26,17 +26,17 @@ shows up in the worker's first poll, not at 3am.
 
 ## Consumer service
 
-A consumer service registers handlers with `@app.job` and runs a worker:
+A consumer service registers handlers with `@soniq.job` and runs a worker:
 
 ```python
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://...")
+soniq = Soniq(database_url="postgresql://...")
 
-@app.job(name="billing.send")
+@soniq.job(name="billing.send")
 async def send(order_id: int): ...
 
-await app.run_worker()
+await soniq.run_worker()
 ```
 
 The same instance can also enqueue (the worker process itself often
@@ -71,7 +71,7 @@ Producer service:
 ```python
 from billing_tasks import SEND_INVOICE, SendInvoiceArgs
 
-await app.enqueue(SEND_INVOICE, args=SendInvoiceArgs(
+await soniq.enqueue(SEND_INVOICE, args=SendInvoiceArgs(
     order_id="o1", customer="acme"
 ).model_dump())
 ```
@@ -81,10 +81,10 @@ Consumer service:
 ```python
 from billing_tasks import SEND_INVOICE, SendInvoiceArgs
 
-@app.job(name=SEND_INVOICE.name, validate=SendInvoiceArgs)
+@soniq.job(name=SEND_INVOICE.name, validate=SendInvoiceArgs)
 async def send_invoice(order_id: str, customer: str): ...
 
-await app.run_worker(queues=["billing"])
+await soniq.run_worker(queues=["billing"])
 ```
 
 The `TaskRef` carries the canonical name, the args model, and the

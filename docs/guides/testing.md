@@ -21,7 +21,7 @@ The fastest way to test. No external services, no cleanup scripts. State lives i
 ```python
 from soniq.testing import make_app
 
-app = make_app()
+soniq = make_app()
 ```
 
 (or, equivalently, `from soniq import Soniq; Soniq(backend="memory")`)
@@ -35,11 +35,11 @@ import pytest
 from soniq.testing import make_app
 
 @pytest.fixture
-async def eq():
-    app = make_app()
-    yield app
-    await app._reset()
-    await app.close()
+async def soniq():
+    soniq = make_app()
+    yield soniq
+    await soniq._reset()
+    await soniq.close()
 ```
 
 ## Async waits without fixed sleeps
@@ -52,16 +52,16 @@ from soniq.testing import wait_until
 
 
 @pytest.mark.asyncio
-async def test_worker_completes_job(eq):
-    @eq.job()
+async def test_worker_completes_job(soniq):
+    @soniq.job()
     async def do_thing():
         return "done"
 
-    job_id = await eq.enqueue(do_thing)
-    asyncio.create_task(eq.run_worker(run_once=True))
+    job_id = await soniq.enqueue(do_thing)
+    asyncio.create_task(soniq.run_worker(run_once=True))
 
     async def is_done():
-        job = await eq.get_job(job_id)
+        job = await soniq.get_job(job_id)
         return job and job["status"] == "done"
 
     await wait_until(
@@ -71,14 +71,14 @@ async def test_worker_completes_job(eq):
     )
 ```
 
-Every test that accepts `eq` gets its own queue with no leftover state from previous runs.
+Every test that accepts `soniq` gets its own queue with no leftover state from previous runs.
 
 ## Testing job logic directly
 
 Job functions are regular async functions. Call them without enqueuing:
 
 ```python
-@eq.job(queue="emails")
+@soniq.job(queue="emails")
 async def send_welcome(to: str):
     return f"sent to {to}"
 
@@ -94,15 +94,15 @@ This is the fastest way to test business logic. Save round-trip tests for integr
 Use `run_worker(run_once=True)` to drain the queue synchronously in your test:
 
 ```python
-async def test_round_trip(eq):
+async def test_round_trip(soniq):
     results = []
 
-    @eq.job(queue="default")
+    @soniq.job(queue="default")
     async def track_call(value: str):
         results.append(value)
 
-    await eq.enqueue(track_call, value="hello")
-    await eq.run_worker(run_once=True)
+    await soniq.enqueue(track_call, value="hello")
+    await soniq.run_worker(run_once=True)
 
     assert results == ["hello"]
 ```
@@ -112,13 +112,13 @@ async def test_round_trip(eq):
 ## Checking job status
 
 ```python
-async def test_job_status(eq):
-    @eq.job()
+async def test_job_status(soniq):
+    @soniq.job()
     async def noop():
         pass
 
-    job_id = await eq.enqueue(noop)
-    job = await eq.get_job(job_id)
+    job_id = await soniq.enqueue(noop)
+    job = await soniq.get_job(job_id)
     assert job["status"] == "queued"
 ```
 
@@ -127,19 +127,19 @@ async def test_job_status(eq):
 Enqueue a job that raises, then call `run_worker(run_once=True)` multiple times:
 
 ```python
-async def test_retry_behavior(eq):
+async def test_retry_behavior(soniq):
     attempts = []
 
-    @eq.job(max_retries=2, retry_delay=0)
+    @soniq.job(max_retries=2, retry_delay=0)
     async def flaky_job():
         attempts.append(1)
         if len(attempts) < 3:
             raise RuntimeError("not yet")
 
-    await eq.enqueue(flaky_job)
-    await eq.run_worker(run_once=True)  # attempt 1: fails
-    await eq.run_worker(run_once=True)  # attempt 2: fails
-    await eq.run_worker(run_once=True)  # attempt 3: succeeds
+    await soniq.enqueue(flaky_job)
+    await soniq.run_worker(run_once=True)  # attempt 1: fails
+    await soniq.run_worker(run_once=True)  # attempt 2: fails
+    await soniq.run_worker(run_once=True)  # attempt 3: succeeds
 
     assert len(attempts) == 3
 ```
@@ -147,18 +147,18 @@ async def test_retry_behavior(eq):
 ## Testing failed jobs
 
 Jobs that exhaust retries land in the dead-letter table, not in
-`soniq_jobs`. Inspect them through `app.dead_letter`:
+`soniq_jobs`. Inspect them through `soniq.dead_letter`:
 
 ```python
-async def test_failure_tracking(eq):
-    @eq.job(max_retries=0)
+async def test_failure_tracking(soniq):
+    @soniq.job(max_retries=0)
     async def always_fails():
         raise ValueError("boom")
 
-    await eq.enqueue(always_fails)
-    await eq.run_worker(run_once=True)
+    await soniq.enqueue(always_fails)
+    await soniq.run_worker(run_once=True)
 
-    dead = await eq.dead_letter.list_dead_letter_jobs()
+    dead = await soniq.dead_letter.list_dead_letter_jobs()
     assert len(dead) == 1
 ```
 
@@ -168,9 +168,9 @@ If you share a single instance across tests (for example, a session-scoped fixtu
 
 ```python
 @pytest.fixture(autouse=True)
-async def clean_slate(eq):
+async def clean_slate(soniq):
     yield
-    await eq._reset()
+    await soniq._reset()
 ```
 
 `_reset()` truncates job and worker tables (or clears the in-memory dicts) without tearing down the connection.
@@ -192,11 +192,11 @@ import pytest
 from soniq import Soniq
 
 @pytest.fixture
-async def eq(tmp_path):
+async def soniq(tmp_path):
     db_path = str(tmp_path / "test.db")
-    app = Soniq(backend="sqlite", database_url=db_path)
-    yield app
-    await app.close()
+    soniq = Soniq(backend="sqlite", database_url=db_path)
+    yield soniq
+    await soniq.close()
 ```
 
 Pass a **bare file path** (`"test.db"`, `str(tmp_path / "test.db")`), not a
@@ -212,4 +212,4 @@ SQLite gives you real SQL semantics (constraints, transactions) without external
 - Keep unit tests on the Memory backend. Reserve PostgreSQL tests for CI or a dedicated integration suite.
 - Use `run_once=True` liberally. It's deterministic and fast.
 - `JobContext` is injected automatically. Add a `ctx: JobContext` parameter to your job function to inspect context during tests.
-- For hooks testing, register `@eq.before_job` / `@eq.after_job` / `@eq.on_error` and assert they were called with the expected context.
+- For hooks testing, register `@soniq.before_job` / `@soniq.after_job` / `@soniq.on_error` and assert they were called with the expected context.
