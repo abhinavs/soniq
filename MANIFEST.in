@@ -10,4 +10,5 @@ include CHANGELOG.md
 exclude tests/
 exclude examples/
 exclude deployment/
+prune bench
 exclude run_tests.py

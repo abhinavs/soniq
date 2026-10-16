@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soniq"
-version = "0.0.5"
+version = "0.1.0rc1"
 description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
 authors = [{ name = "Abhinav Saxena", email = "abhinav@apiclabs.com" }]
 readme = "README.md"
@@ -57,6 +57,8 @@ dashboard = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
 sqlite = ["aiosqlite>=0.19.0"]
 webhooks = ["aiohttp>=3.8.0", "cryptography>=3.4.0"]
 logging = ["structlog>=22.0.0"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
+psycopg = ["psycopg[binary]>=3.1"]
 dev = [
   "pytest>=7.4.0",
   "pytest-asyncio>=0.21.0",
@@ -73,6 +75,9 @@ dev = [
   "cryptography>=3.4.0",
   "fastapi>=0.100.0",
   "uvicorn>=0.20.0",
+  "sqlalchemy[asyncio]>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.1",
 ]
 full = ["soniq[sqlite,webhooks,logging,dashboard]"]
 
