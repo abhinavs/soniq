@@ -8,7 +8,10 @@ Every subcommand that talks to a Soniq instance goes through ``cli_app``:
 
 ``cli_app`` always builds a fresh Soniq instance scoped to this CLI
 invocation. URL precedence: ``--database-url`` > ``$SONIQ_DATABASE_URL``
-> the default in ``SoniqSettings``. There is no fallback to a
+> the default in ``SoniqSettings``. When the operator passes an app path
+(``--app module:attribute`` or ``APP``), both helpers use that instance
+instead, with the URL precedence ``--database-url`` >
+``$SONIQ_DATABASE_URL`` > the instance's own URL. There is no fallback to a
 process-global instance - per ``docs/_internals/contracts/instance_boundary.md``,
 the only state allowed to be process-global in 0.0.2 is logging
 configuration.
@@ -22,7 +25,7 @@ from urllib.parse import urlsplit
 
 from soniq import Soniq
 
-from ._helpers import resolve_soniq_instance
+from ._helpers import load_app, resolve_soniq_instance
 from .colors import print_status
 
 
@@ -33,6 +36,9 @@ async def resolve_app(args: Any) -> Soniq:
     Callers are responsible for closing it (``cli_app`` does this on
     context exit).
     """
+    instance = load_app(args)
+    if instance is not None:
+        return instance
     instance = await resolve_soniq_instance(args)
     if instance is not None:
         return instance
@@ -102,6 +108,13 @@ async def execution_app(args: Any, modules: List[str]) -> AsyncIterator[Soniq]:
     ``discover_and_import_modules``) before this is called.
     """
     from soniq.discovery import find_soniq_app
+
+    if getattr(args, "app", None):
+        # The operator named the instance, and load_app already applied any
+        # --database-url / SONIQ_DATABASE_URL override to it.
+        async with cli_app(args) as app:
+            yield app
+        return
 
     discovered = find_soniq_app(modules)
     if discovered is None:

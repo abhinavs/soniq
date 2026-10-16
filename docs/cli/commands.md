@@ -7,13 +7,50 @@ environment variable.
 soniq <command> [options]
 ```
 
+## Pointing a command at your app
+
+By default, the CLI reads `SONIQ_DATABASE_URL` and `SONIQ_JOBS_MODULES`. You
+can also name your `Soniq` instance directly. Use the form `module:attribute`:
+
+```python
+# myapp/jobs.py
+from soniq import Soniq
+
+soniq = Soniq(database_url="postgresql://localhost/myapp")
+```
+
+```bash
+soniq setup myapp.jobs:soniq
+soniq worker myapp.jobs:soniq --concurrency 4
+```
+
+- `worker`, `setup` and `scheduler` accept the app as an optional positional
+  argument `APP`.
+- `worker`, `setup`, `scheduler`, `status`, `inspect`, `dashboard` and
+  `dead-letter` accept the same value with `--app module:attribute`.
+- If you give only a module (`myapp.jobs`), Soniq finds the instance in that
+  module.
+
+The command imports the module and uses that instance, with its settings.
+The database URL comes from the first of these that is set:
+
+1. `--database-url`
+2. `SONIQ_DATABASE_URL`
+3. The URL of the instance
+
+The app module is imported first. `SONIQ_JOBS_MODULES` and `--jobs-modules`
+add more modules to it.
+
+If the module does not exist, the attribute does not exist, or the attribute
+is not a `Soniq` instance, the command stops with an error.
+
 
 ## setup
 
 Create or update the database schema. Idempotent -- run it on every deploy.
 
 ```bash
-soniq setup
+soniq setup [APP]
 ```
 
 What it does:
@@ -32,7 +69,7 @@ Soniq.
 Start a worker process that fetches and executes jobs.
 
 ```bash
-soniq worker [--concurrency N] [--queues QUEUES] [--jobs-modules MODULES] [--run-once]
+soniq worker [APP] [--concurrency N] [--queues QUEUES] [--jobs-modules MODULES] [--run-once]
 ```
 
 | Flag | Type | Default | Description |
@@ -42,7 +79,7 @@ soniq worker [--concurrency N] [--queues QUEUES] [--jobs-modules MODULES] [--run
 | `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (the env var sets the base; this flag adds more) for per-worker overrides. |
 | `--run-once` | flag | off | Process all available jobs and exit. |
 
-Requires `SONIQ_JOBS_MODULES` to be set so the worker can discover and import
+Requires `SONIQ_JOBS_MODULES` (or `APP`, see [Pointing a command at your app](#pointing-a-command-at-your-app)) so the worker can discover and import
 your job functions. See [Job module discovery](../getting-started/installation.md#job-module-discovery) for the full reference (single-repo, cross-service, and per-worker overrides).
 
 ```bash
@@ -233,7 +270,7 @@ Start the recurring job scheduler. It checks for due `@periodic` jobs and
 enqueues them.
 
 ```bash
-soniq scheduler [--check-interval SECONDS] [--jobs-modules MODULES]
+soniq scheduler [APP] [--check-interval SECONDS] [--jobs-modules MODULES]
 ```
 
 | Flag | Type | Default | Description |
