@@ -1,6 +1,7 @@
 """Job registry - maps job names to functions and config. Each Soniq instance owns one; no global registry."""
 
 import functools
+import logging
 from typing import (  # noqa: F401
     Any,
     Awaitable,
@@ -21,6 +22,28 @@ from soniq.settings import SoniqSettings
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+logger = logging.getLogger(__name__)
+
+
+class _BoundEnqueue:
+    """Runtime object behind ``job.options(...)``. ``job.enqueue`` uses one with no options."""
+
+    __slots__ = ("_soniq", "_job", "_options")
+
+    def __init__(self, soniq: Any, job: Callable[..., Any], options: Dict[str, Any]):
+        self._soniq = soniq
+        self._job = job
+        self._options = options
+
+    async def enqueue(self, *args: Any, **kwargs: Any) -> str:
+        if args:
+            raise TypeError(
+                f"{self._job.__name__}.enqueue() takes job arguments as keywords "
+                f"only; got {len(args)} positional argument(s)"
+            )
+        job_id: str = await self._soniq.enqueue(self._job, **self._options, **kwargs)
+        return job_id
 
 
 class JobRegistry:
@@ -46,6 +69,7 @@ class JobRegistry:
         timeout: Optional[Union[int, float]] = None,
         _route_map: Optional[Dict[str, str]] = None,
         _task_name_pattern: Optional[str] = None,
+        _soniq: Any = None,
         **kwargs: Any,
     ) -> Callable[_P, Awaitable[_R]]:
         # Derived names skip pattern validation - callers didn't choose them and module/qualname
@@ -97,7 +121,53 @@ class JobRegistry:
         wrapper._soniq_name = job_name  # type: ignore[attr-defined]
         wrapper._soniq_config = job_config  # type: ignore[attr-defined]
 
+        if _soniq is not None:
+            self._add_enqueue_helpers(wrapper, func, _soniq)
+
         return wrapper
+
+    @staticmethod
+    def _add_enqueue_helpers(
+        wrapper: Callable[..., Any], func: Callable[..., Any], soniq: Any
+    ) -> None:
+        """Add ``wrapper.enqueue(...)`` and ``wrapper.options(...)``, bound to ``soniq``."""
+
+        def options(
+            *,
+            queue: Optional[str] = None,
+            priority: Optional[int] = None,
+            scheduled_at: Any = None,
+            unique: Optional[bool] = None,
+            dedup_key: Optional[str] = None,
+            connection: Any = None,
+        ) -> _BoundEnqueue:
+            return _BoundEnqueue(
+                soniq,
+                wrapper,
+                {
+                    "queue": queue,
+                    "priority": priority,
+                    "scheduled_at": scheduled_at,
+                    "unique": unique,
+                    "dedup_key": dedup_key,
+                    "connection": connection,
+                },
+            )
+
+        helpers = {
+            "enqueue": _BoundEnqueue(soniq, wrapper, {}).enqueue,
+            "options": options,
+        }
+        for attr, value in helpers.items():
+            # functools.wraps copies func.__dict__, so never shadow the user's own attribute.
+            if hasattr(func, attr):
+                logger.debug(
+                    "Job %r already has attribute %r; not adding the Soniq helper",
+                    getattr(wrapper, "_soniq_name", wrapper.__name__),
+                    attr,
+                )
+                continue
+            setattr(wrapper, attr, value)
 
     def get_job(self, name: str) -> Optional[Dict[str, Any]]:
         return self._registry.get(name)

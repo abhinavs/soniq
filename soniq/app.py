@@ -60,9 +60,11 @@ from .utils.producer_id import resolve_producer_id
 from .utils.rate_limit import default_warner
 
 if TYPE_CHECKING:
-    from .types import QueueStats
+    from .types import JobFunction, QueueStats
 
 _P = ParamSpec("_P")
+_JP = ParamSpec("_JP")
+_JR = TypeVar("_JR")
 
 logger = logging.getLogger(__name__)
 
@@ -339,10 +341,13 @@ class Soniq:
         await self._ensure_initialized()
         await self._backend.reset()  # type: ignore[union-attr]
 
-    def job(self, **kwargs: Any) -> Any:
-        """Register a job. Use as ``@app.job(...)``; the bare ``@app.job`` form is not supported."""
-        _JP = ParamSpec("_JP")
-        _JR = TypeVar("_JR")
+    def job(
+        self, **kwargs: Any
+    ) -> Callable[[Callable[_JP, Awaitable[_JR]]], "JobFunction[_JP, _JR]"]:
+        """Register a job. Use as ``@app.job(...)``; the bare ``@app.job`` form is not supported.
+
+        Returns the same function, with ``.enqueue(...)`` and ``.options(...)`` added.
+        """
 
         # Pass per-instance route_map and task_name_pattern so validation is scoped
         # to this Soniq instance, not a global cache.
@@ -351,13 +356,16 @@ class Soniq:
 
         def decorator(
             func: Callable[_JP, Awaitable[_JR]],
-        ) -> Callable[_JP, Awaitable[_JR]]:
-            return self._job_registry.register_job(
+        ) -> "JobFunction[_JP, _JR]":
+            wrapper = self._job_registry.register_job(
                 func,
                 _route_map=route_map,
                 _task_name_pattern=task_name_pattern,
+                _soniq=self,
                 **kwargs,
             )
+            # Typing only: the runtime object is the plain wrapper function.
+            return wrapper  # type: ignore[return-value]
 
         return decorator
 

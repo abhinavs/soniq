@@ -35,6 +35,14 @@ A few things to notice:
 - Arguments are keyword-only. There is no `enqueue(send_welcome_email, 42)`; it is always `user_id=42`. This makes job calls self-documenting and migration-safe - reordering parameters in your function does not silently break enqueued jobs.
 - `enqueue` returns a job id you can use later to check status or cancel.
 
+You can also call `.enqueue()` on the job function itself:
+
+```python
+job_id = await send_welcome_email.enqueue(user_id=42)
+```
+
+This does the same thing as `soniq.enqueue(send_welcome_email, user_id=42)`. A type checker such as mypy or pyright checks the arguments against the function signature. Both forms are supported. `soniq.enqueue(...)` is not deprecated. See [job.enqueue() and job.options()](../api/jobs.md#jobenqueue-and-joboptions).
+
 ## Job status lifecycle
 
 Every enqueued job lives in one of these states:
@@ -82,7 +90,7 @@ The rest of this page covers features you can come back to later. The basics abo
 
 `@soniq.job` accepts several optional parameters - timeout, priority, retry settings, deduplication, argument validation. Each shows up later in the tutorial when it matters. The full list lives in the [Jobs API reference](../api/jobs.md).
 
-The empty-parens form `@soniq.job()` is identical to `@soniq.job` - you will see it in code that started without arguments and later grew them.
+Always write the parentheses: `@soniq.job()`. The bare form `@soniq.job` is not supported.
 
 ### Explicit task names (for cross-service setups)
 
@@ -114,6 +122,14 @@ job_id = await soniq.enqueue(
     queue="urgent",      # route to a different queue
     unique=True,         # deduplicate this specific enqueue
 )
+```
+
+With the job handle, put the overrides in `.options()`:
+
+```python
+job_id = await send_welcome_email.options(
+    priority=1, queue="urgent", unique=True
+).enqueue(user_id=42)
 ```
 
 ### JobContext: runtime metadata in your handler
