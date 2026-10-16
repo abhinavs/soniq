@@ -33,7 +33,7 @@ The plugin gives you two fixtures:
 To use the jobs of your own app, point the fixture at it with the `soniq` marker:
 
 ```python
-from soniq.testing.helpers import drain
+from soniq.testing import drain
 
 @pytest.mark.soniq(app="myapp.jobs:app")
 async def test_welcome_email(soniq_memory):
