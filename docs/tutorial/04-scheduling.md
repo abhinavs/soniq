@@ -15,7 +15,7 @@ Schedule a job to run at a specific time or after a delay.
 ```python
 from datetime import datetime, timezone
 
-await app.schedule(
+await soniq.schedule(
     send_welcome_email,
     run_at=datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc),
     user_id=42,
@@ -27,15 +27,15 @@ await app.schedule(
 ```python
 from datetime import timedelta
 
-await app.schedule(send_report, run_at=timedelta(minutes=30), report_id="q4")
-await app.schedule(send_report, run_at=600, report_id="q4")  # 600 seconds from now
+await soniq.schedule(send_report, run_at=timedelta(minutes=30), report_id="q4")
+await soniq.schedule(send_report, run_at=600, report_id="q4")  # 600 seconds from now
 ```
 
 `run_at` accepts a UTC `datetime`, a `timedelta`, or a number of seconds from now. Under the hood, `schedule()` calls `enqueue()` with a `scheduled_at` timestamp. The worker ignores scheduled jobs until their time arrives.
 
 ## Recurring jobs
 
-### `@app.periodic()` decorator
+### `@soniq.periodic()` decorator
 
 The single decorator that registers a job and its schedule together. The scheduler process picks up all `@periodic` functions automatically.
 
@@ -44,22 +44,22 @@ from datetime import timedelta
 from soniq import cron, daily, every, monthly, weekly
 
 # Cron expression (string or builder).
-@app.periodic(cron=daily().at("09:00"), name="reports.daily")
+@soniq.periodic(cron=daily().at("09:00"), name="reports.daily")
 async def daily_sales_report():
     ...
 
 # Plain cron strings work too.
-@app.periodic(cron="0 9 * * 1-5", name="weekday.morning")
+@soniq.periodic(cron="0 9 * * 1-5", name="weekday.morning")
 async def weekday_summary():
     ...
 
 # Interval (cron has no sub-minute resolution; pass a timedelta).
-@app.periodic(every=timedelta(seconds=30), name="metrics.flush")
+@soniq.periodic(every=timedelta(seconds=30), name="metrics.flush")
 async def flush_metrics():
     ...
 ```
 
-`@app.periodic` accepts the same kwargs as `@app.job` (`name`, `queue`, `priority`, `retries`, `validate`, etc.) - it is `@app.job` plus the periodic stamp. `name` is optional and falls back to `f"{module}.{qualname}"`.
+`@soniq.periodic` accepts the same kwargs as `@soniq.job` (`name`, `queue`, `priority`, `retries`, `validate`, etc.) - it is `@soniq.job` plus the periodic stamp. `name` is optional and falls back to `f"{module}.{qualname}"`.
 
 ### Cron-string builders
 
@@ -71,19 +71,19 @@ One big example, every builder in one place:
 from datetime import timedelta
 from soniq import Soniq, cron, daily, every, monthly, weekly
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
 # every(N).minutes() -> "*/N * * * *"
 # Fires at :00, :05, :10, ..., :55 of every hour.
-@app.periodic(cron=every(5).minutes(), name="metrics.scrape")
+@soniq.periodic(cron=every(5).minutes(), name="metrics.scrape")
 async def scrape_metrics():
     await collector.scrape()
 
 
 # every(N).hours() -> "0 */N * * *"
 # Fires at 00:00, 02:00, 04:00, ..., 22:00 UTC. Always on the hour.
-@app.periodic(cron=every(2).hours(), name="cache.refresh")
+@soniq.periodic(cron=every(2).hours(), name="cache.refresh")
 async def refresh_cache():
     await cache.refresh_all()
 
@@ -91,14 +91,14 @@ async def refresh_cache():
 # every(N).seconds() -> timedelta(seconds=N), NOT a cron string.
 # Cron has no sub-minute resolution, so pass via `every=`, not `cron=`.
 # Equivalent to `every=timedelta(seconds=30)` - the builder is just a readable alias.
-@app.periodic(every=every(30).seconds(), name="health.ping")
+@soniq.periodic(every=every(30).seconds(), name="health.ping")
 async def ping_upstream():
     await healthcheck.ping()
 
 
 # daily().at("HH:MM") -> "M H * * *"
 # Fires once a day at the given UTC time. 24-hour clock.
-@app.periodic(cron=daily().at("09:00"), name="reports.daily")
+@soniq.periodic(cron=daily().at("09:00"), name="reports.daily")
 async def send_daily_report():
     await report_service.send_daily()
 
@@ -106,7 +106,7 @@ async def send_daily_report():
 # weekly().on("DAY").at("HH:MM") -> "M H * * D"
 # Fires once a week. on() accepts a day name ("monday".."sunday", case-insensitive)
 # or an integer (0=Sunday .. 6=Saturday).
-@app.periodic(cron=weekly().on("monday").at("09:00"), name="reports.weekly")
+@soniq.periodic(cron=weekly().on("monday").at("09:00"), name="reports.weekly")
 async def send_weekly_summary():
     await report_service.send_weekly()
 
@@ -114,7 +114,7 @@ async def send_weekly_summary():
 # monthly().on_day(N).at("HH:MM") -> "M H N * *"
 # Fires once a month on day-of-month N (1-31). If the month does not have that
 # day (e.g. day 31 in February), cron simply skips that month.
-@app.periodic(cron=monthly().on_day(15).at("12:00"), name="billing.midmonth")
+@soniq.periodic(cron=monthly().on_day(15).at("12:00"), name="billing.midmonth")
 async def run_midmonth_billing():
     await billing.run_midmonth()
 
@@ -122,17 +122,17 @@ async def run_midmonth_billing():
 # cron("EXPR") -> identity passthrough; returns the string unchanged.
 # Escape hatch for the full 5-field grammar (ranges, lists, step+offset combos)
 # or expressions copied from elsewhere. `cron="0 9 * * 1-5"` is equivalent.
-@app.periodic(cron=cron("0 9 * * 1-5"), name="weekday.morning")
+@soniq.periodic(cron=cron("0 9 * * 1-5"), name="weekday.morning")
 async def weekday_morning_digest():
     await digest.send()
 ```
 
 ### Imperative API for dynamic schedules
 
-When a schedule is computed at runtime (per-tenant, per-feature-flag, ...), use `app.scheduler.add(...)`:
+When a schedule is computed at runtime (per-tenant, per-feature-flag, ...), use `soniq.scheduler.add(...)`:
 
 ```python
-await app.scheduler.add(
+await soniq.scheduler.add(
     target=cleanup,                # callable, registered task name, or use name=
     cron="0 9 * * *",
     args={"region": "US"},
@@ -140,12 +140,12 @@ await app.scheduler.add(
     priority=10,
 )
 
-await app.scheduler.pause("reports.daily")
-await app.scheduler.resume("reports.daily")
-await app.scheduler.remove("reports.daily")
+await soniq.scheduler.pause("reports.daily")
+await soniq.scheduler.resume("reports.daily")
+await soniq.scheduler.remove("reports.daily")
 
-schedules = await app.scheduler.list(status="active")
-sched = await app.scheduler.get("reports.daily")
+schedules = await soniq.scheduler.list(status="active")
+sched = await soniq.scheduler.get("reports.daily")
 ```
 
 Schedules are keyed by the resolved task name. Calling `add()` again with the same name updates the schedule in place rather than creating a duplicate.
@@ -177,9 +177,9 @@ at your process supervisor.
 ### Programmatic start
 
 ```python
-await app.scheduler.start(check_interval=30)
+await soniq.scheduler.start(check_interval=30)
 # ...later...
-await app.scheduler.stop()
+await soniq.scheduler.stop()
 ```
 
 ## Persistence

@@ -9,15 +9,15 @@ Queues let you separate jobs by workload type and control which workers process 
 Assign a job to a queue in the decorator:
 
 ```python
-@app.job(queue="emails")
+@soniq.job(queue="emails")
 async def send_welcome_email(user_id: int):
     ...
 
-@app.job(queue="billing")
+@soniq.job(queue="billing")
 async def charge_subscription(account_id: str, amount: int):
     ...
 
-@app.job  # defaults to "default" queue
+@soniq.job  # defaults to "default" queue
 async def process_thumbnail(image_id: str):
     ...
 ```
@@ -25,7 +25,7 @@ async def process_thumbnail(image_id: str):
 You can also override the queue at enqueue time:
 
 ```python
-await app.enqueue(send_welcome_email, user_id=42, queue="urgent")
+await soniq.enqueue(send_welcome_email, user_id=42, queue="urgent")
 ```
 
 ## Priority ordering
@@ -37,15 +37,15 @@ Within a queue, jobs are processed by priority. Lower number means higher priori
 | 1 | Urgent -- user-facing, time-sensitive |
 | 10 | High -- important but not blocking |
 | 50 | Normal -- default for most workloads |
-| 100 | Default -- the `@app.job` default |
+| 100 | Default -- the `@soniq.job` default |
 
 ```python
-@app.job(queue="billing", priority=10)
+@soniq.job(queue="billing", priority=10)
 async def charge_subscription(account_id: str, amount: int):
     ...
 
 # One-off priority override
-await app.enqueue(charge_subscription, account_id="acct_123", amount=999, priority=1)
+await soniq.enqueue(charge_subscription, account_id="acct_123", amount=999, priority=1)
 ```
 
 ## Running workers on specific queues
@@ -74,7 +74,7 @@ This lets you scale queue capacity independently. Run more email workers during 
 ## Queue stats
 
 ```python
-stats = await app.get_queue_stats()
+stats = await soniq.get_queue_stats()
 for queue in stats:
     print(f"{queue['queue']}: {queue['queued']} queued, {queue['processing']} processing")
 ```

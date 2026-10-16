@@ -1,15 +1,15 @@
 # Recipe: Scheduled Reports
 
-A pattern for generating recurring reports on a cron schedule using `@app.periodic`.
+A pattern for generating recurring reports on a cron schedule using `@soniq.periodic`.
 
 ## The job
 
 ```python
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@app.periodic(cron="0 9 * * 1")  # Every Monday at 9 AM
+@soniq.periodic(cron="0 9 * * 1")  # Every Monday at 9 AM
 async def weekly_sales_report():
     start, end = get_last_week_range()
     data = await fetch_sales_data(start, end)
@@ -21,7 +21,7 @@ async def weekly_sales_report():
     )
 ```
 
-The `@app.periodic` decorator registers both the job and its schedule. The scheduler picks it up automatically.
+The `@soniq.periodic` decorator registers both the job and its schedule. The scheduler picks it up automatically.
 
 ## Running the scheduler
 
@@ -42,15 +42,15 @@ The scheduler checks registered periodic jobs and enqueues them when their sched
 Cron expressions for specific times:
 
 ```python
-@app.periodic(cron="0 9 * * *")       # Daily at 9 AM
+@soniq.periodic(cron="0 9 * * *")       # Daily at 9 AM
 async def daily_digest():
     ...
 
-@app.periodic(cron="0 0 1 * *")       # First of every month
+@soniq.periodic(cron="0 0 1 * *")       # First of every month
 async def monthly_summary():
     ...
 
-@app.periodic(cron="*/15 * * * *")     # Every 15 minutes
+@soniq.periodic(cron="*/15 * * * *")     # Every 15 minutes
 async def check_stale_orders():
     ...
 ```
@@ -61,16 +61,16 @@ Interval helpers for simpler cases (use the cron-string builders or a `timedelta
 from datetime import timedelta
 from soniq import every
 
-@app.periodic(cron=every(10).minutes())
+@soniq.periodic(cron=every(10).minutes())
 async def cleanup_temp_files():
     ...
 
-@app.periodic(cron=every(1).hours())
+@soniq.periodic(cron=every(1).hours())
 async def sync_inventory():
     ...
 
 # Sub-minute uses every= directly (cron has no second resolution).
-@app.periodic(every=timedelta(seconds=30))
+@soniq.periodic(every=timedelta(seconds=30))
 async def health_ping():
     ...
 ```
@@ -78,7 +78,7 @@ async def health_ping():
 You can combine `@periodic` with any `@job` option:
 
 ```python
-@app.periodic(cron="0 9 * * 1", queue="reports", max_retries=2, timeout=300)
+@soniq.periodic(cron="0 9 * * 1", queue="reports", max_retries=2, timeout=300)
 async def weekly_report():
     ...
 ```
@@ -89,10 +89,10 @@ async def weekly_report():
 # app/reports.py
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@app.periodic(cron="0 9 * * 1", queue="reports", timeout=300)
+@soniq.periodic(cron="0 9 * * 1", queue="reports", timeout=300)
 async def weekly_sales_report():
     start, end = get_last_week_range()
     data = await fetch_sales_data(start, end)
@@ -105,7 +105,7 @@ async def weekly_sales_report():
     )
 
 
-@app.periodic(cron="0 6 * * *", queue="reports")
+@soniq.periodic(cron="0 6 * * *", queue="reports")
 async def daily_error_digest():
     errors = await fetch_errors_since_yesterday()
     if not errors:

@@ -28,7 +28,7 @@ class RetryPolicy(Protocol):
         Return None to dead-letter immediately."""
 ```
 
-`attempt` is 1-based and reflects the count after the dequeue bump. `job_meta` is the registry config dict (`retry_delay`, `retry_backoff`, `retry_max_delay`, plus any custom keys passed to `@app.job(...)`). `exc` is the exception that surfaced from the handler; it is a synthetic `RuntimeError` whose message is the rendered traceback. Inspect `str(exc)` rather than `type(exc)`.
+`attempt` is 1-based and reflects the count after the dequeue bump. `job_meta` is the registry config dict (`retry_delay`, `retry_backoff`, `retry_max_delay`, plus any custom keys passed to `@soniq.job(...)`). `exc` is the exception that surfaced from the handler; it is a synthetic `RuntimeError` whose message is the rendered traceback. Inspect `str(exc)` rather than `type(exc)`.
 
 ## Example: rate-limit-aware policy
 
@@ -60,7 +60,7 @@ class RateLimitAwarePolicy:
         return _DEFAULT.delay_for(attempt=attempt, job_meta=job_meta, exc=exc)
 
 
-app = Soniq(
+soniq = Soniq(
     database_url="postgresql://localhost/myapp",
     retry_policy=RateLimitAwarePolicy(),
 )
@@ -76,11 +76,11 @@ class NoRetry:
         return None
 
 
-app = Soniq(retry_policy=NoRetry())
+soniq = Soniq(retry_policy=NoRetry())
 ```
 
 Useful for jobs where any failure represents corrupt data and a retry would burn database cycles for nothing.
 
 ## Combining with the registry's `max_retries`
 
-The policy is consulted only after the handler raises. The dequeue-time check that compares `attempts` to `max_attempts` (set by `@app.job(max_retries=N)`) still applies: a policy that always returns `0.5` on a job with `max_retries=3` will retry 3 times then dead-letter regardless. To dead-letter earlier, return `None` from the policy.
+The policy is consulted only after the handler raises. The dequeue-time check that compares `attempts` to `max_attempts` (set by `@soniq.job(max_retries=N)`) still applies: a policy that always returns `0.5` on a job with `max_retries=3` will retry 3 times then dead-letter regardless. To dead-letter earlier, return `None` from the policy.

@@ -26,11 +26,11 @@ The four patterns are interchangeable. If your team uses SQLAlchemy, use the SQL
 The simplest pattern. Borrow a connection from Soniq's own backend pool. No second pool, no extraction step:
 
 ```python
-await eq.ensure_initialized()
-async with eq.backend.acquire() as conn:
+await soniq.ensure_initialized()
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders (id, total) VALUES ($1, $2)", order_id, total)
-        await eq.enqueue(send_invoice, connection=conn, order_id=order_id)
+        await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
 The `connection=conn` parameter is the only thing that changes from a normal enqueue call. Everything else works the same -- job options, priority, scheduling.
@@ -44,17 +44,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from soniq import Soniq
 
-eq = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await soniq.ensure_initialized()
     yield
-    await eq.close()
+    await soniq.close()
 
 app = FastAPI(lifespan=lifespan)
 
 
-@eq.job(queue="invoices", max_retries=5)
+@soniq.job(queue="invoices", max_retries=5)
 async def send_invoice(order_id: int):
     order = await get_order(order_id)
     await generate_and_send_invoice(order)
@@ -62,14 +63,13 @@ async def send_invoice(order_id: int):
 
 @app.post("/orders")
 async def create_order(product_id: int, quantity: int):
-    await eq.ensure_initialized()
-    async with eq.backend.acquire() as conn:
+    async with soniq.backend.acquire() as conn:
         async with conn.transaction():
             order_id = await conn.fetchval(
                 "INSERT INTO orders (product_id, quantity) VALUES ($1, $2) RETURNING id",
                 product_id, quantity,
             )
-            await eq.enqueue(send_invoice, connection=conn, order_id=order_id)
+            await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 
     return {"order_id": order_id}
 ```
@@ -81,17 +81,22 @@ If the INSERT fails or anything else raises inside the transaction block, both t
 If your app already manages its own `asyncpg.Pool` (common in apps that predate Soniq), you don't need to involve Soniq's pool at all. Pass the connection from *your* pool to `enqueue` and the job row goes through your transaction:
 
 ```python
+from contextlib import asynccontextmanager
+
 import asyncpg
 from fastapi import FastAPI
 
-app = FastAPI()
-eq = Soniq(database_url=os.environ["DATABASE_URL"])
+soniq = Soniq(database_url=os.environ["DATABASE_URL"])
 db_pool: asyncpg.Pool                                # your application's pool
 
-@app.on_event("startup")
-async def _on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global db_pool
     db_pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
+    yield
+    await db_pool.close()
+
+app = FastAPI(lifespan=lifespan)
 
 @app.post("/orders")
 async def create_order(product_id: int, quantity: int):
@@ -101,7 +106,7 @@ async def create_order(product_id: int, quantity: int):
                 "INSERT INTO orders (product_id, quantity) VALUES ($1, $2) RETURNING id",
                 product_id, quantity,
             )
-            await eq.enqueue(send_invoice, connection=conn, order_id=order_id)
+            await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
     return {"order_id": order_id}
 ```
 
@@ -118,7 +123,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 app = FastAPI()
-eq = Soniq(database_url=os.environ["DATABASE_URL"])
+soniq = Soniq(database_url=os.environ["DATABASE_URL"])
 
 @app.post("/orders")
 async def create_order(
@@ -135,7 +140,7 @@ async def create_order(
         raw_conn = await db.connection()
         asyncpg_conn = raw_conn.sync_connection.connection.driver_connection
 
-        await eq.enqueue(send_invoice, connection=asyncpg_conn, order_id=order.id)
+        await soniq.enqueue(send_invoice, connection=asyncpg_conn, order_id=order.id)
     # SQLAlchemy commits here. The job becomes visible to workers at the same moment.
 ```
 
@@ -162,7 +167,7 @@ async def create_order(product_id: int, quantity: int):
         # conn._connection is the raw asyncpg connection. Private attribute,
         # works in current Tortoise releases. A first-class Tortoise integration
         # is on the roadmap.
-        await eq.enqueue(send_invoice, connection=conn._connection, order_id=order.id)
+        await soniq.enqueue(send_invoice, connection=conn._connection, order_id=order.id)
 ```
 
 If you'd like first-class Tortoise support that does not depend on a private attribute, please open an issue -- it's not a hard integration to write, we just want to gauge demand before adding the dependency.
@@ -186,6 +191,6 @@ Soniq provides **at-least-once delivery**. If a worker crashes after executing t
 ## What transactional enqueue does NOT guarantee
 
 - **Single execution.** The guarantee applies to enqueue only. Re-execution after worker crashes is still possible.
-- **Rollback after commit.** Once committed, the job is in the queue. You can cancel it with `eq.cancel_job(job_id)`, but a fast worker might pick it up first.
+- **Rollback after commit.** Once committed, the job is in the queue. You can cancel it with `soniq.cancel_job(job_id)`, but a fast worker might pick it up first.
 
 > **Note:** Transactional enqueue requires PostgreSQL. It is not available with the SQLite or Memory backends. Calling `enqueue(..., connection=conn)` on a non-PostgreSQL backend raises a `ValueError`.

@@ -8,10 +8,10 @@ A pattern for processing uploaded files (images, PDFs, videos) with long timeout
 import asyncio
 from soniq import Soniq
 
-eq = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@eq.job(queue="media", timeout=600, max_retries=2)
+@soniq.job(queue="media", timeout=600, max_retries=2)
 async def process_upload(file_id: int):
     file = await get_file(file_id)
 
@@ -29,7 +29,7 @@ async def process_upload(file_id: int):
 @app.post("/uploads")
 async def upload_file(file: UploadFile):
     saved = await save_upload(file)
-    await eq.enqueue(process_upload, file_id=saved.id)
+    await soniq.enqueue(process_upload, file_id=saved.id)
     return {"file_id": saved.id, "status": "processing"}
 ```
 
@@ -56,17 +56,17 @@ Keep concurrency low for media workers. Each job may consume significant memory 
 **Multiple processing steps.** Break large jobs into a pipeline:
 
 ```python
-@eq.job(queue="media", timeout=300, max_retries=2)
+@soniq.job(queue="media", timeout=300, max_retries=2)
 async def generate_thumbnails(file_id: int):
     file = await get_file(file_id)
     sizes = [(150, 150), (300, 300), (800, 800)]
     for width, height in sizes:
         thumb = await asyncio.to_thread(resize_image, file.path, width, height)
         await save_thumbnail(file_id, thumb, f"{width}x{height}")
-    await eq.enqueue(extract_metadata, file_id=file_id)
+    await soniq.enqueue(extract_metadata, file_id=file_id)
 
 
-@eq.job(queue="media", timeout=60, max_retries=2)
+@soniq.job(queue="media", timeout=60, max_retries=2)
 async def extract_metadata(file_id: int):
     file = await get_file(file_id)
     metadata = await asyncio.to_thread(read_exif, file.path)
@@ -76,7 +76,7 @@ async def extract_metadata(file_id: int):
 **Progress tracking.** Update a status field so the API can report progress:
 
 ```python
-@eq.job(queue="media", timeout=600, max_retries=2)
+@soniq.job(queue="media", timeout=600, max_retries=2)
 async def process_video(file_id: int):
     await update_status(file_id, "transcoding")
     output = await asyncio.to_thread(transcode_video, file.path)

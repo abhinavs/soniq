@@ -8,10 +8,10 @@ A production pattern for sending transactional emails with retries, idempotency,
 from soniq import Soniq
 from soniq.job import JobContext
 
-eq = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@eq.job(queue="emails", max_retries=3, retry_delay=[5, 30, 300])
+@soniq.job(queue="emails", max_retries=3, retry_delay=[5, 30, 300])
 async def send_welcome_email(user_id: int, ctx: JobContext):
     user = await get_user(user_id)
 
@@ -29,7 +29,7 @@ async def send_welcome_email(user_id: int, ctx: JobContext):
 @app.post("/users")
 async def create_user(name: str, email: str):
     user = await save_user(name=name, email=email)
-    await eq.enqueue(send_welcome_email, user_id=user.id)
+    await soniq.enqueue(send_welcome_email, user_id=user.id)
     return {"id": user.id}
 ```
 
@@ -56,7 +56,7 @@ Keep email worker concurrency low to respect rate limits. If your provider allow
 **Escalating with backoff.** For longer retry windows, use `retry_backoff=True` with a base delay:
 
 ```python
-@eq.job(queue="emails", max_retries=5, retry_delay=10, retry_backoff=True, retry_max_delay=3600)
+@soniq.job(queue="emails", max_retries=5, retry_delay=10, retry_backoff=True, retry_max_delay=3600)
 async def send_email_with_backoff(user_id: int):
     ...
 ```
@@ -64,9 +64,9 @@ async def send_email_with_backoff(user_id: int):
 **Transactional enqueue.** If you're creating the user row and enqueuing the email in the same request, wrap them in a transaction so neither happens without the other:
 
 ```python
-await eq.ensure_initialized()
-async with eq.backend.acquire() as conn:
+await soniq.ensure_initialized()
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         user_id = await conn.fetchval("INSERT INTO users (...) VALUES (...) RETURNING id", ...)
-        await eq.enqueue(send_welcome_email, connection=conn, user_id=user_id)
+        await soniq.enqueue(send_welcome_email, connection=conn, user_id=user_id)
 ```

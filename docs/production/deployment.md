@@ -53,7 +53,7 @@ sudo chown soniq:soniq /opt/soniq /var/log/soniq
 
 ## Recurring jobs require a scheduler sidecar
 
-If your application uses `@app.periodic(...)` jobs, deploy a separate `soniq scheduler` process alongside `soniq worker`. The worker process **does not** evaluate due recurring jobs - that responsibility lives with the scheduler so worker scaling does not duplicate scheduler work.
+If your application uses `@soniq.periodic(...)` jobs, deploy a separate `soniq scheduler` process alongside `soniq worker`. The worker process **does not** evaluate due recurring jobs - that responsibility lives with the scheduler so worker scaling does not duplicate scheduler work.
 
 If `soniq worker` finds `@periodic` decorators registered and no scheduler-sidecar process holds the leadership lock, it prints a one-time WARN at startup. To silence the WARN once you have configured the sidecar (or if you intentionally do not run recurring jobs), set `SONIQ_SCHEDULER_SUPPRESS_WARNING=1` in the worker environment.
 

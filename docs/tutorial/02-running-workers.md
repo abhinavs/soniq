@@ -21,7 +21,7 @@ soniq worker --concurrency 8 --queues emails,billing
 soniq worker --run-once
 ```
 
-Each invocation supervises one worker process. Run it from your process manager (systemd, Kubernetes Deployment, supervisord) and let the manager handle restarts and scaling. The programmatic `app.run_worker(...)` entry point exists for tests and embedded scenarios; do not use it for production deployments -- you lose the process-manager safety net (restart-on-crash, log capture, graceful-shutdown timeouts).
+Each invocation supervises one worker process. Run it from your process manager (systemd, Kubernetes Deployment, supervisord) and let the manager handle restarts and scaling. The programmatic `soniq.run_worker(...)` entry point exists for tests and embedded scenarios; do not use it for production deployments -- you lose the process-manager safety net (restart-on-crash, log capture, graceful-shutdown timeouts).
 
 ## Concurrency model
 
@@ -31,7 +31,7 @@ Each worker runs a configurable number of asyncio tasks (default: 4). These task
 - CPU-bound jobs block the event loop. Wrap them in `asyncio.to_thread()`:
 
 ```python
-@app.job()
+@soniq.job()
 async def generate_pdf(report_id: str):
     report = await fetch_report(report_id)
     # Offload CPU work to a thread
@@ -106,15 +106,15 @@ The cleanup operation marks stale workers as stopped and resets their in-flight 
 Register hooks on the app to run code before/after every job or on errors:
 
 ```python
-@app.before_job
+@soniq.before_job
 async def log_job_start(job_name, job_id, args):
     logger.info(f"Starting {job_name} ({job_id})")
 
-@app.after_job
+@soniq.after_job
 async def log_job_complete(job_name, job_id, result):
     logger.info(f"Completed {job_name} ({job_id})")
 
-@app.on_error
+@soniq.on_error
 async def log_job_error(job_name, job_id, error):
     logger.error(f"Failed {job_name} ({job_id}): {error}")
 ```
