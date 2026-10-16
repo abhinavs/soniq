@@ -12,6 +12,8 @@ license = "MIT"
 requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 4 - Beta",
+  "Framework :: AsyncIO",
+  "Framework :: FastAPI",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -30,6 +32,11 @@ keywords = [
   "redis-alternative",
   "developer-experience",
   "background-jobs",
+  "fastapi",
+  "sqlalchemy",
+  "asyncio",
+  "background-tasks",
+  "task-queue",
 ]
 dependencies = [
   "asyncpg>=0.30.0,<1.0",
@@ -70,9 +77,9 @@ dev = [
 full = ["soniq[sqlite,webhooks,logging,dashboard]"]
 
 [project.urls]
-Homepage = "https://github.com/abhinavs/soniq"
+Homepage = "https://soniq.abhinav.co"
 Repository = "https://github.com/abhinavs/soniq"
-Documentation = "https://github.com/abhinavs/soniq/tree/main/docs"
+Documentation = "https://soniq.abhinav.co"
 Changelog = "https://github.com/abhinavs/soniq/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/abhinavs/soniq/issues"
 

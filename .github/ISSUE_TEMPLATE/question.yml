@@ -1,0 +1,19 @@
+name: Question
+description: Ask how to do something with Soniq
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+      description: Code or config you already have, and the docs pages you read.
+  - type: input
+    id: soniq-version
+    attributes:
+      label: Soniq version

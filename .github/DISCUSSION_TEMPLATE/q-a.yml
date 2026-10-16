@@ -1,0 +1,11 @@
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: input
+    id: soniq-version
+    attributes:
+      label: Soniq version
