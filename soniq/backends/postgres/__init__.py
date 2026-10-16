@@ -163,7 +163,7 @@ class PostgresBackend:
     async def create_job_transactional(
         self,
         *,
-        connection: asyncpg.Connection,
+        connection: Any,
         job_id: str,
         job_name: str,
         args: dict,
@@ -176,7 +176,25 @@ class PostgresBackend:
         scheduled_at: Optional[datetime] = None,
         producer_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Enqueue within a caller-provided transaction. PostgreSQL only."""
+        """Enqueue within a caller-provided transaction. PostgreSQL only.
+
+        ``connection`` is an asyncpg connection or a psycopg 3 AsyncConnection.
+        """
+        if type(connection).__module__.split(".", 1)[0] == "psycopg":
+            return await self._create_job_on_psycopg(
+                connection,
+                job_id=job_id,
+                job_name=job_name,
+                args=args,
+                args_hash=args_hash,
+                max_attempts=max_attempts,
+                priority=priority,
+                queue=queue,
+                unique=unique,
+                dedup_key=dedup_key,
+                scheduled_at=scheduled_at,
+                producer_id=producer_id,
+            )
         return await self._create_job_on_conn(
             connection,
             job_id=job_id,
@@ -302,6 +320,70 @@ class PostgresBackend:
             "soniq_new_job",
             queue,
         )
+        return job_id
+
+    async def _create_job_on_psycopg(
+        self,
+        conn: Any,
+        *,
+        job_id: str,
+        job_name: str,
+        args: dict,
+        args_hash: Optional[str],
+        max_attempts: int,
+        priority: int,
+        queue: str,
+        unique: bool,
+        dedup_key: Optional[str],
+        scheduled_at: Optional[datetime],
+        producer_id: Optional[str],
+    ) -> Optional[str]:
+        """Same inserts as ``_create_job_on_conn`` for a psycopg 3 AsyncConnection."""
+        uid = uuid.UUID(job_id)
+        args_json = json.dumps(args, default=str)
+        cols = (
+            "id, job_name, args, args_hash, max_attempts, priority, queue, unique_job"
+        )
+        vals = "%s, %s, %s::text::jsonb, %s, %s, %s, %s, %s"
+        params: list[Any] = [
+            uid,
+            job_name,
+            args_json,
+            args_hash,
+            max_attempts,
+            priority,
+            queue,
+            unique,
+        ]
+        if dedup_key:
+            cols += ", dedup_key"
+            vals += ", %s"
+            params.append(dedup_key)
+            tail = (
+                " ON CONFLICT (dedup_key) WHERE status = 'queued' AND dedup_key IS NOT NULL"
+                " DO UPDATE SET dedup_key = EXCLUDED.dedup_key RETURNING id"
+            )
+        elif unique:
+            params[7] = True
+            tail = (
+                " ON CONFLICT (job_name, args_hash) WHERE status = 'queued' AND unique_job = TRUE"
+                " DO UPDATE SET unique_job = EXCLUDED.unique_job RETURNING id"
+            )
+        else:
+            tail = ""
+        cols += ", scheduled_at, producer_id"
+        vals += ", %s, %s"
+        params += [scheduled_at, producer_id]
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"INSERT INTO soniq_jobs ({cols}) VALUES ({vals}){tail}", params
+            )
+            row = await cur.fetchone() if tail else None
+            await cur.execute("SELECT pg_notify(%s, %s)", ("soniq_new_job", queue))
+        if tail:
+            assert row is not None
+            return str(row[0])
         return job_id
 
     async def create_jobs_bulk(
