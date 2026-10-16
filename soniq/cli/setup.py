@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ._context import cli_app
-from ._helpers import database_url_argument
+from ._helpers import app_argument, database_url_argument
 from .colors import print_status
 
 
@@ -14,6 +14,7 @@ def add_setup_cmd(subparsers) -> None:
         description="Initialize or update Soniq database schema",
     )
     database_url_argument(parser)
+    app_argument(parser, positional=True)
     parser.set_defaults(func=handle_setup)
 
 

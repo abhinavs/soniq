@@ -5,7 +5,7 @@ from __future__ import annotations
 from soniq.discovery import discover_and_import_modules
 
 from ._context import cli_app, execution_app
-from ._helpers import database_url_argument, resolve_jobs_modules
+from ._helpers import app_argument, database_url_argument, resolve_jobs_modules
 from .colors import print_status
 
 
@@ -29,6 +29,7 @@ def add_dashboard_cmd(subparsers) -> None:
         ),
     )
     database_url_argument(parser)
+    app_argument(parser)
     parser.set_defaults(func=handle_dashboard)
 
 

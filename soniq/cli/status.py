@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from ._context import cli_app
-from ._helpers import database_url_argument
+from ._helpers import app_argument, database_url_argument
 from .colors import StatusIcon, print_status
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ def add_status_cmd(subparsers) -> None:
         "--verbose", action="store_true", help="Show detailed information"
     )
     database_url_argument(parser)
+    app_argument(parser)
     parser.set_defaults(func=handle_status)
 
 

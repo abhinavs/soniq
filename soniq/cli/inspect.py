@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ._context import cli_app
-from ._helpers import database_url_argument
+from ._helpers import app_argument, database_url_argument
 from .colors import StatusIcon, print_status
 
 
@@ -26,6 +26,7 @@ def add_inspect_cmd(subparsers) -> None:
         help="List each recurring schedule (name, status, next run)",
     )
     database_url_argument(parser)
+    app_argument(parser)
     parser.set_defaults(func=handle_inspect)
 
 

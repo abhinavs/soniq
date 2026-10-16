@@ -9,6 +9,7 @@ from soniq.discovery import discover_and_import_modules
 
 from ._context import execution_app
 from ._helpers import (
+    app_argument,
     configure_cli_logging,
     database_url_argument,
     resolve_jobs_modules,
@@ -53,6 +54,7 @@ def add_worker_cmd(subparsers) -> None:
         help="Root logger level (default: INFO, or $SONIQ_LOG_LEVEL)",
     )
     database_url_argument(parser)
+    app_argument(parser, positional=True)
     parser.set_defaults(func=handle_worker)
 
 
