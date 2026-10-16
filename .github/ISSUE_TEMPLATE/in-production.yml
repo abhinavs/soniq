@@ -1,0 +1,32 @@
+name: I use Soniq in production
+description: Tell us how you run Soniq
+title: "Using Soniq: "
+labels: [in-production]
+body:
+  - type: input
+    id: who
+    attributes:
+      label: Company or project
+      description: A name, or write "anonymous".
+    validations:
+      required: true
+  - type: input
+    id: volume
+    attributes:
+      label: Job volume
+      description: Roughly how many jobs per day or per second.
+      placeholder: "about 50k jobs per day"
+    validations:
+      required: true
+  - type: textarea
+    id: replaced
+    attributes:
+      label: What did Soniq replace?
+      description: For example Celery, RQ, a cron script, or nothing.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Rough edges, missing features, setup details.
