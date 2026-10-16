@@ -209,6 +209,10 @@ class PostgresBackend:
         producer_id: Optional[str] = None,
     ) -> Optional[str]:
         uid = uuid.UUID(job_id)
+        # Send args as JSON text with an explicit cast. The connection may come
+        # from the caller (their own pool, an ORM session) without Soniq's JSONB
+        # codec, so this must not depend on the codec. Same encoding as the codec.
+        args_json = json.dumps(args, default=str)
 
         # ON CONFLICT DO UPDATE SET (no-op) RETURNING id fires for the existing row too,
         # so the returned id is always a real row - no caller-id can leak through a race window.
@@ -218,7 +222,7 @@ class PostgresBackend:
                 INSERT INTO soniq_jobs
                     (id, job_name, args, args_hash, max_attempts, priority, queue,
                      unique_job, dedup_key, scheduled_at, producer_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (dedup_key)
                     WHERE status = 'queued' AND dedup_key IS NOT NULL
                 DO UPDATE SET dedup_key = EXCLUDED.dedup_key
@@ -226,7 +230,7 @@ class PostgresBackend:
                 """,
                 uid,
                 job_name,
-                args,
+                args_json,
                 args_hash,
                 max_attempts,
                 priority,
@@ -250,7 +254,7 @@ class PostgresBackend:
                 INSERT INTO soniq_jobs
                     (id, job_name, args, args_hash, max_attempts, priority, queue,
                      unique_job, scheduled_at, producer_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (job_name, args_hash)
                     WHERE status = 'queued' AND unique_job = TRUE
                 DO UPDATE SET unique_job = EXCLUDED.unique_job
@@ -258,7 +262,7 @@ class PostgresBackend:
                 """,
                 uid,
                 job_name,
-                args,
+                args_json,
                 args_hash,
                 max_attempts,
                 priority,
@@ -280,11 +284,11 @@ class PostgresBackend:
             INSERT INTO soniq_jobs
                 (id, job_name, args, args_hash, max_attempts, priority, queue,
                  unique_job, scheduled_at, producer_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10)
             """,
             uid,
             job_name,
-            args,
+            args_json,
             args_hash,
             max_attempts,
             priority,
