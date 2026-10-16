@@ -5,7 +5,21 @@ backends, dashboard, and CLI all import from here. Keep additions narrow
 and tied to a contract in ``docs/_internals/contracts/``.
 """
 
-from typing import TypedDict
+from datetime import datetime, timedelta
+from typing import (
+    Any,
+    Coroutine,
+    Dict,
+    Optional,
+    ParamSpec,
+    Protocol,
+    TypedDict,
+    TypeVar,
+    Union,
+)
+
+_P = ParamSpec("_P")
+_R_co = TypeVar("_R_co", covariant=True)
 
 
 class QueueStats(TypedDict):
@@ -31,3 +45,53 @@ class QueueStats(TypedDict):
     done: int
     dead_letter: int
     cancelled: int
+
+
+class JobOptions(Protocol[_P]):
+    """What ``job.options(...)`` returns: an ``enqueue`` with fixed options.
+
+    The job's own arguments are type-checked against the job signature.
+    Pass them as keywords; positional arguments raise ``TypeError``.
+    """
+
+    def enqueue(
+        self, *args: _P.args, **kwargs: _P.kwargs
+    ) -> Coroutine[Any, Any, str]: ...
+
+
+class JobFunction(Protocol[_P, _R_co]):
+    """Static type of a function decorated with ``@soniq.job()``.
+
+    This is a typing aid only. At runtime the decorator returns a plain
+    function (a ``functools.wraps`` wrapper) with these extra attributes.
+    A ``JobFunction`` is still a ``Callable[P, Awaitable[R]]``, so code
+    that calls the job directly or passes it to ``soniq.enqueue()``
+    type-checks as before.
+    """
+
+    __name__: str
+    __qualname__: str
+    __module__: str
+    _soniq_name: str
+    _soniq_config: Dict[str, Any]
+
+    def __call__(
+        self, *args: _P.args, **kwargs: _P.kwargs
+    ) -> Coroutine[Any, Any, _R_co]: ...
+
+    def enqueue(self, *args: _P.args, **kwargs: _P.kwargs) -> Coroutine[Any, Any, str]:
+        """Enqueue this job. Same as ``soniq.enqueue(job, **kwargs)``."""
+        ...
+
+    def options(
+        self,
+        *,
+        queue: Optional[str] = None,
+        priority: Optional[int] = None,
+        scheduled_at: Union[datetime, timedelta, int, float, None] = None,
+        unique: Optional[bool] = None,
+        dedup_key: Optional[str] = None,
+        connection: Optional[Any] = None,
+    ) -> JobOptions[_P]:
+        """Return a handle whose ``enqueue`` uses these enqueue options."""
+        ...

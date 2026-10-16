@@ -108,6 +108,61 @@ async with app.backend.acquire() as conn:
 Transactional enqueue requires the PostgreSQL backend.
 
 
+## job.enqueue() and job.options()
+
+The decorator adds two methods to the job function: `.enqueue()` and `.options()`. Use them to enqueue a job without passing the function to `soniq.enqueue()`.
+
+```python
+soniq = Soniq(database_url="postgresql://localhost/myapp")
+
+@soniq.job()
+async def send_welcome(to: str) -> None:
+    ...
+
+# Enqueue with the job's own arguments.
+job_id = await send_welcome.enqueue(to="dev@example.com")
+
+# Set enqueue options, then enqueue.
+job_id = await send_welcome.options(queue="emails", priority=10).enqueue(
+    to="dev@example.com"
+)
+
+# The function is still a plain async function.
+await send_welcome(to="dev@example.com")
+```
+
+`send_welcome.enqueue(**kwargs)` does the same thing as `soniq.enqueue(send_welcome, **kwargs)`. It uses the `Soniq` instance that registered the job, and the same task name, also when you set `name=` on the decorator.
+
+`.options()` accepts the enqueue options of `enqueue()`: `queue`, `priority`, `scheduled_at`, `unique`, `dedup_key` and `connection`. It returns an object with one method, `.enqueue(**kwargs)`. You can keep this object and use it more than one time.
+
+```python
+async with soniq.backend.acquire() as conn:
+    async with conn.transaction():
+        await conn.execute("INSERT INTO users (email) VALUES ($1)", email)
+        await send_welcome.options(connection=conn).enqueue(to=email)
+```
+
+Use `.options()` when the job has an argument with the same name as an enqueue option, for example `queue`. In `send_welcome.enqueue(queue="x")`, `queue` is the enqueue option, not the job argument. This is the same rule as for `soniq.enqueue()`.
+
+### Type checking
+
+A type checker such as mypy or pyright checks the arguments of `.enqueue()` against the job signature. A wrong argument name or type is an error before the code runs:
+
+```python
+await send_welcome.enqueue(too="dev@example.com")  # error: unexpected keyword "too"
+```
+
+The static return type of `@soniq.job()` is `soniq.types.JobFunction[P, R]`. It is a typing aid only. At runtime the decorator returns the same plain function as before, with the extra attributes. A `JobFunction` is still a `Callable[P, Awaitable[R]]`, so code that wraps or calls the job type-checks without changes.
+
+Pass job arguments as keywords. A positional argument to `.enqueue()` raises `TypeError`. A type checker does not report it.
+
+### Compatibility
+
+`soniq.enqueue(send_welcome, ...)` stays supported. It is not deprecated, and there is no plan to remove it. Both forms write the same job row. Use the form that you prefer.
+
+If your function already has an attribute named `enqueue` or `options`, Soniq does not replace it. Soniq writes a debug log message and does not add that method.
+
+
 ## enqueue_many()
 
 Bulk-enqueue many jobs that share the same target. Returns a list of job IDs in input order.
