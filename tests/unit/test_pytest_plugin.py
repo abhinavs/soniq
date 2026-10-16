@@ -68,16 +68,19 @@ def test_pg_rolls_back(pytester):
         test_pg="""
         from soniq.testing.helpers import drain
 
+        # The database may hold rows from other tests, so track our own job.
+        seen = []
+
         async def test_a(soniq_pg):
             @soniq_pg.job()
             async def hi():
                 return "hi"
-            await soniq_pg.enqueue(hi)
+            seen.append(await soniq_pg.enqueue(hi))
             assert await drain(soniq_pg) == ["hi"]
+            assert await soniq_pg.get_job(seen[0]) is not None
 
         async def test_b(soniq_pg):
-            stats = await soniq_pg.get_queue_stats()
-            assert stats["queued"] == 0 and stats["done"] == 0
+            assert await soniq_pg.get_job(seen[0]) is None
         """
     )
     pytester.runpytest_subprocess().assert_outcomes(passed=2)
