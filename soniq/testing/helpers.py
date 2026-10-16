@@ -68,3 +68,44 @@ def make_app(**overrides: Any) -> Any:
     from soniq import Soniq
 
     return Soniq(backend="memory", **overrides)
+
+
+async def drain(soniq: Any, max_jobs: Optional[int] = None) -> list[Any]:
+    """Run queued jobs in the current event loop until none are ready.
+
+    Returns the results of the jobs that finished successfully, in the
+    order they ran. Jobs that fail are retried or dead-lettered by the
+    normal rules and add nothing to the list. Jobs scheduled for the
+    future are not ready, so `drain` leaves them alone. Pass `max_jobs`
+    to stop after that many jobs.
+    """
+    from soniq.core.processor import process_job_via_backend
+
+    await soniq._ensure_initialized()
+    backend = soniq._backend
+    results: list[Any] = []
+    original = backend.mark_job_done
+
+    async def record(job_id: str, **kwargs: Any) -> None:
+        results.append(kwargs.get("result"))
+        await original(job_id, **kwargs)
+
+    backend.mark_job_done = record
+    try:
+        count = 0
+        while max_jobs is None or count < max_jobs:
+            processed = await process_job_via_backend(
+                backend=backend,
+                job_registry=soniq._job_registry,
+                hooks=soniq._hooks,
+                middleware=soniq._middleware,
+                retry_policy=soniq._retry_policy,
+                metrics_sink=soniq._metrics_sink,
+                settings=soniq._settings,
+            )
+            if not processed:
+                break
+            count += 1
+    finally:
+        del backend.mark_job_done
+    return results
