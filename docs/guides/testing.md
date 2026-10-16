@@ -12,7 +12,40 @@ from soniq.testing import MemoryBackend, make_app, wait_until
 
 - `MemoryBackend`: in-memory `StorageBackend`. No persistence, no concurrency contention. Good for unit tests; never use it in production.
 - `make_app(**overrides)`: one-liner Soniq wired against `MemoryBackend`. Equivalent to `Soniq(backend="memory", **overrides)`.
+- `drain(soniq, max_jobs=None)`: run queued jobs until none are ready, in the test's own event loop. Returns the list of job results.
 - `wait_until(predicate, *, timeout=2.0, poll=0.01, message=None)`: deadline-based polling that replaces fixed `asyncio.sleep(...)` calls in async tests. Predicate may be sync or async. Raises `AssertionError` on timeout.
+
+## Pytest plugin
+
+Soniq ships an opt-in pytest plugin. Soniq does not load it for you. Add this line to your `conftest.py`:
+
+```python
+pytest_plugins = ["soniq.testing.pytest_plugin"]
+```
+
+You can also run `pytest -p soniq.testing.pytest_plugin`.
+
+The plugin gives you two fixtures:
+
+- `soniq_memory`: a `Soniq` on the in-memory backend.
+- `soniq_pg`: a `Soniq` on PostgreSQL. It reads `SONIQ_DATABASE_URL` and skips the test if the variable is not set. The test runs in one transaction. The plugin rolls it back at the end, so the test leaves no rows behind. It creates the Soniq tables first if they do not exist.
+
+To use the jobs of your own app, point the fixture at it with the `soniq` marker:
+
+```python
+from soniq.testing.helpers import drain
+
+@pytest.mark.soniq(app="myapp.jobs:app")
+async def test_welcome_email(soniq_memory):
+    from myapp.jobs import send_email
+
+    await soniq_memory.enqueue(send_email, to="dev@example.com")
+    assert await drain(soniq_memory) == [{"sent": True}]
+```
+
+`drain` runs every ready job and returns the results of the jobs that finished. Jobs scheduled for later stay in the queue.
+
+The async tests need `pytest-asyncio`.
 
 ## Memory backend for unit tests
 
