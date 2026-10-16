@@ -31,6 +31,7 @@ from .dashboard import add_dashboard_cmd
 from .dead_letter import add_dead_letter_cmd
 from .inspect import add_inspect_cmd
 from .migrate_status import add_migrate_status_cmd
+from .migrations_export import add_migrations_cmd
 from .scheduler import add_scheduler_cmd
 from .setup import add_setup_cmd
 from .status import add_status_cmd
@@ -79,6 +80,7 @@ For more information, visit: https://github.com/abhinavs/soniq
     add_status_cmd(sub)
     add_inspect_cmd(sub)
     add_migrate_status_cmd(sub)
+    add_migrations_cmd(sub)
     add_dashboard_cmd(sub)
     add_scheduler_cmd(sub)
     add_dead_letter_cmd(sub)
