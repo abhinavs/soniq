@@ -24,7 +24,6 @@ if [ -z "${SONIQ_DATABASE_URL:-}" ]; then
   done
 fi
 export SONIQ_DATABASE_URL
-export SONIQ_JOBS_MODULES=jobs
 
 python3 -m venv "$work/venv"
 "$work/venv/bin/python" -m pip install -q "$root"
@@ -42,7 +41,7 @@ PY
 
 cd "$work/app"
 soniq setup
-PYTHONUNBUFFERED=1 soniq worker --concurrency 1 >"$work/worker.log" 2>&1 &
+PYTHONUNBUFFERED=1 soniq worker jobs:soniq --concurrency 1 >"$work/worker.log" 2>&1 &
 worker_pid=$!
 sleep 3
 python jobs.py

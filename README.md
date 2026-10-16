@@ -4,7 +4,11 @@
 
 # Soniq
 
-Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain.
+Background jobs for FastAPI and any asyncio app, stored in the Postgres you already have. No Redis, no broker, nothing else to run.
+
+- Jobs are rows in your database. They survive restarts and deploys, and they retry on failure.
+- Enqueue a job in the same transaction as your business write. If the write rolls back, the job is gone too.
+- Retries, scheduling, a dead-letter queue and a dashboard are in the package.
 
 [![PyPI version](https://img.shields.io/pypi/v/soniq)](https://pypi.org/project/soniq/)
 [![Python versions](https://img.shields.io/pypi/pyversions/soniq)](https://pypi.org/project/soniq/)
@@ -34,52 +38,70 @@ if __name__ == "__main__":
 
 ```bash
 export SONIQ_DATABASE_URL="postgresql://localhost/myapp"
-export SONIQ_JOBS_MODULES=jobs
 
-soniq setup                    # one-time: create tables
-soniq worker --concurrency 4   # run a worker
-python jobs.py                 # enqueue (in another terminal)
+soniq setup                              # one-time: create tables
+soniq worker jobs:soniq --concurrency 4  # run a worker
+python jobs.py                           # enqueue (in another terminal)
 ```
 
-Four steps. Define a job, set up the database, run a worker, enqueue. `Soniq()` and the `soniq` command both read `SONIQ_DATABASE_URL`, so one setting covers all of them. `SONIQ_JOBS_MODULES` tells the worker which modules to import so it can find your `@soniq.job()` definitions.
+Four steps. Define a job, set up the database, run a worker, enqueue. `Soniq()` and the `soniq` command both read `SONIQ_DATABASE_URL`. `jobs:soniq` tells the worker where your Soniq instance is, so it finds your `@soniq.job()` functions. The `SONIQ_JOBS_MODULES=jobs` environment variable from earlier releases still works.
+
+## Coming from FastAPI BackgroundTasks
+
+`BackgroundTasks` runs the task inside the web process after the response is sent. If that process stops before the task finishes, for example when a deploy stops it after a short grace period, the task is lost. There are no retries.
+
+With Soniq the task is a row in Postgres. The change is small:
+
+```diff
+-from fastapi import BackgroundTasks, FastAPI
++from fastapi import FastAPI
++from soniq import Soniq
++from soniq.integrations.fastapi import lifespan
+
+-app = FastAPI()
++soniq = Soniq()
++app = FastAPI(lifespan=lifespan(soniq, run_worker=True))
+
++@soniq.job(retries=3)
+ async def send_welcome(user_id: int):
+     ...
+
+ @app.post("/users")
+-async def create_user(name: str, background_tasks: BackgroundTasks):
++async def create_user(name: str):
+     user = await save_user(name=name)
+-    background_tasks.add_task(send_welcome, user.id)
++    await soniq.enqueue(send_welcome, user_id=user.id)
+     return {"id": user.id}
+```
+
+`run_worker=True` runs the worker in the same process, so you still deploy one service. When the load grows, run `soniq worker` as its own process. [examples/backgroundtasks_vs_soniq](examples/backgroundtasks_vs_soniq) restarts a server mid-send with both versions and counts the lost jobs. See the [FastAPI guide](docs/guides/fastapi.md) for details.
 
 ## Transactional enqueue
 
-The reason most teams choose a Postgres-backed queue. Enqueue a job inside the same transaction as your business writes - if the transaction rolls back, the job never existed:
+Enqueue a job inside the same transaction as your business write. If the transaction rolls back, the job never existed. With SQLAlchemy async, pass your session:
 
 ```python
-# Borrow a connection from Soniq's asyncpg pool. Any active asyncpg
-# connection works here; it does not have to be Soniq's pool. If your
-# app already has its own pool (or a SQLAlchemy session), pass that
-# connection instead - see docs/guides/transactional-enqueue.md.
-async with soniq.backend.acquire() as conn:
-    async with conn.transaction():
-        # Your business write. The order row only becomes visible once
-        # this transaction commits.
-        await conn.execute(
-            "INSERT INTO orders (id, total) VALUES ($1, $2)",
-            order_id, total,
-        )
-
-        # Same connection -> same transaction. The job row goes into
-        # soniq_jobs as part of *this* COMMIT, not a separate one.
-        # connection=conn is the only thing that differs from a normal
-        # enqueue() call.
-        await soniq.enqueue(
-            send_invoice,
-            connection=conn,
-            order_id=order_id,
-        )
-
-        # If anything inside this `with` block raises, both writes
-        # roll back together. The order is never created without the
-        # follow-up job, and the job is never created for an order
-        # that does not exist.
+async with db.begin():
+    order = Order(product_id=product_id, quantity=quantity)
+    db.add(order)
+    await db.flush()
+    await soniq.enqueue(send_invoice, connection=db, order_id=order.id)
+# SQLAlchemy commits here. Workers see the job at the same moment.
 ```
 
-No Redis-backed queue can do this - their writes happen on a different system, so you need an outbox table and a drain process to keep them in sync. Soniq's job table lives in your Postgres, so a single transaction covers both.
+Raw asyncpg and psycopg 3 connections work too:
 
-Soniq is at-least-once, not exactly-once: a worker can crash after running your handler but before marking the row done, and the heartbeat sweep will requeue it. Handlers should be idempotent. See [docs/guides/cross-service-jobs.md](docs/guides/cross-service-jobs.md) for the full delivery-semantics details.
+```python
+async with soniq.backend.acquire() as conn:
+    async with conn.transaction():
+        await conn.execute("INSERT INTO orders (id, total) VALUES ($1, $2)", order_id, total)
+        await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
+```
+
+A Redis-backed queue cannot do this. Its writes go to a different system, so you need an outbox table and a process to drain it. Soniq's job table is in your Postgres, so one transaction covers both. See the [transactional enqueue guide](docs/guides/transactional-enqueue.md).
+
+Soniq is at-least-once, not exactly-once. A worker can crash after it runs your handler but before it marks the row done. The heartbeat sweep then requeues the job. Write handlers so they can run again safely. See [docs/guides/cross-service-jobs.md](docs/guides/cross-service-jobs.md) for the delivery details.
 
 ## Why Soniq
 
@@ -95,6 +117,8 @@ Soniq uses your existing PostgreSQL. One dependency. One place your data lives. 
 | Setup complexity             | Low   | High        | Medium |
 | Built-in dashboard           | Yes   | No (Flower) | No     |
 | Dead-letter queue            | Yes   | No          | No     |
+
+For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-backed queues, see [docs/compare.md](docs/compare.md). For numbers, see [docs/benchmarks.md](docs/benchmarks.md). For what we promise to keep stable, see [docs/stability.md](docs/stability.md).
 
 ## When NOT to use Soniq
 
@@ -138,6 +162,8 @@ pip install soniq[full]        # everything below
 pip install soniq[dashboard]   # web dashboard (FastAPI + uvicorn)
 pip install soniq[webhooks]    # webhook delivery + signing
 pip install soniq[logging]     # structlog integration
+pip install soniq[sqlalchemy]  # pass a SQLAlchemy session to enqueue
+pip install soniq[psycopg]     # pass a psycopg 3 connection to enqueue
 ```
 
 The default install is batteries-included: `croniter` (so `@periodic` and the recurring scheduler work out of the box) and `prometheus_client` (so `PrometheusMetricsSink` is importable) ship with core. They stay dormant unless wired - the scheduler only runs if you start it, and the default `MetricsSink` is `NoopMetricsSink`.
@@ -147,6 +173,11 @@ The default install is batteries-included: `croniter` (so `@periodic` and the re
 - [Quickstart](docs/quickstart.md)
 - [Tutorial: defining jobs](docs/tutorial/01-defining-jobs.md)
 - [FastAPI integration](docs/guides/fastapi.md)
+- [Transactional enqueue](docs/guides/transactional-enqueue.md)
+- [Compare tools](docs/compare.md)
+- [Benchmarks](docs/benchmarks.md)
+- [Stability and versioning](docs/stability.md)
+- [FastAPI demo app](examples/fastapi_demo)
 - [Going to production](docs/production/going-to-production.md)
 - [Deployment](docs/production/deployment.md)
 - [CLI reference](docs/cli/commands.md)
@@ -156,7 +187,7 @@ The default install is batteries-included: `croniter` (so `@periodic` and the re
 
 - [`AGENTS.md`](AGENTS.md) - canonical patterns, anti-patterns, and the four mistakes agents most often make.
 - [`docs/llms.txt`](docs/llms.txt) - curated index of the canonical pages, following the [llms.txt convention](https://llmstxt.org).
-- [`docs/llms-full.txt`](docs/llms-full.txt) - the six canonical pages concatenated for one-shot context loading.
+- [`docs/llms-full.txt`](docs/llms-full.txt) - the canonical pages concatenated for one-shot context loading.
 
 ## License
 

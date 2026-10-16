@@ -74,7 +74,7 @@ The home page lists these too. They belong on this page as well, because the rea
 
 You will likely have a good time with Soniq if:
 
-- You are building a Python web app (FastAPI, Django, Flask, Litestar, anything else).
+- You are building a FastAPI app or another asyncio Python app.
 - You are using PostgreSQL.
 - You want background jobs but you do not want another service to run.
 - Your throughput is "thousands of jobs per minute" or less, not "tens of thousands per second".
