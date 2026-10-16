@@ -21,9 +21,9 @@ def _fake_conn(*, in_txn: bool = True, driver: str = "asyncpg") -> MagicMock:
 
 async def test_wrong_driver_gives_clear_error():
     with pytest.raises(SoniqError) as exc:
-        await to_asyncpg_connection(_fake_conn(driver="psycopg"))
+        await to_asyncpg_connection(_fake_conn(driver="aiosqlite"))
     assert "asyncpg driver" in str(exc.value)
-    assert "psycopg" in str(exc.value)
+    assert "aiosqlite" in str(exc.value)
 
 
 async def test_no_transaction_gives_clear_error():
