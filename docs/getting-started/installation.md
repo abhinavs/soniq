@@ -47,13 +47,13 @@ Soniq picks the storage backend from your `database_url`:
 from soniq import Soniq
 
 # PostgreSQL -- production
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 # SQLite -- local dev, no server
-app = Soniq(database_url="local.db")
+soniq = Soniq(database_url="local.db")
 
 # In-memory -- unit tests
-app = Soniq(backend="memory")
+soniq = Soniq(backend="memory")
 ```
 
 **PostgreSQL** is the only production-grade backend. It supports multiple concurrent workers, instant job delivery via `LISTEN/NOTIFY`, and transactional enqueue (enqueue a job inside your application's database transaction so the job only exists if the transaction commits).
@@ -69,15 +69,15 @@ Optional capabilities are activated by running the matching process or by instal
 | Capability | How to turn it on |
 |---|---|
 | Dead-letter queue | Always on. Failed jobs that exhaust retries land in `soniq_dead_letter_jobs`. |
-| Per-job timeouts | Always on (default `SONIQ_JOB_TIMEOUT=300` seconds). Override per-job with `@app.job(timeout=...)` or set `SONIQ_JOB_TIMEOUT=0` to disable. |
+| Per-job timeouts | Always on (default `SONIQ_JOB_TIMEOUT=300` seconds). Override per-job with `@soniq.job(timeout=...)` or set `SONIQ_JOB_TIMEOUT=0` to disable. |
 | Recurring jobs | Run `soniq scheduler` alongside your worker. |
 | Web dashboard | `pip install soniq[dashboard]` and run `soniq dashboard`. Dashboard mutations require `SONIQ_DASHBOARD_WRITE_ENABLED=true`. |
-| HTTP webhooks | `pip install soniq[webhooks]` and configure `app.webhooks`. |
+| HTTP webhooks | `pip install soniq[webhooks]` and configure `soniq.webhooks`. |
 | Prometheus metrics | Wire a `PrometheusMetricsSink` on the `Soniq(...)` constructor. The default sink is a no-op. |
 
 ## Job module discovery
 
-Soniq workers run in a separate process from the code that defines your jobs. When a worker starts, it has no idea what jobs exist -- it has to be told which Python modules to import so the `@app.job()` decorators run and the job registry gets populated.
+Soniq workers run in a separate process from the code that defines your jobs. When a worker starts, it has no idea what jobs exist -- it has to be told which Python modules to import so the `@soniq.job()` decorators run and the job registry gets populated.
 
 `SONIQ_JOBS_MODULES` is that instruction.
 
