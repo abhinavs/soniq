@@ -37,20 +37,23 @@ pip install soniq
 import asyncio
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq()
 
-@app.job()
+@soniq.job(name="send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(app.enqueue(send_welcome, to="dev@example.com"))
+    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
 ```
 
 ```bash
-soniq setup                          # one-time: create tables
-SONIQ_JOBS_MODULES=jobs soniq worker  # run a worker
-python jobs.py                       # enqueue
+export SONIQ_DATABASE_URL="postgresql://localhost/myapp"
+export SONIQ_JOBS_MODULES=jobs
+
+soniq setup                    # one-time: create tables
+soniq worker --concurrency 4   # run a worker
+python jobs.py                 # enqueue (in another terminal)
 ```
 
 Four steps. Define a job, set up the database, run a worker, enqueue.

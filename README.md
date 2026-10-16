@@ -22,23 +22,26 @@ pip install soniq
 import asyncio
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq()
 
-@app.job()
+@soniq.job(name="send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(app.enqueue(send_welcome, to="dev@example.com"))
+    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
 ```
 
 ```bash
-soniq setup                                       # one-time: create tables
-SONIQ_JOBS_MODULES=jobs soniq worker --concurrency 4   # run a worker
-python jobs.py                                    # enqueue
+export SONIQ_DATABASE_URL="postgresql://localhost/myapp"
+export SONIQ_JOBS_MODULES=jobs
+
+soniq setup                    # one-time: create tables
+soniq worker --concurrency 4   # run a worker
+python jobs.py                 # enqueue (in another terminal)
 ```
 
-Four steps. Define a job, set up the database, run a worker, enqueue. `SONIQ_JOBS_MODULES` tells the worker which modules to import so it can find your `@app.job` definitions.
+Four steps. Define a job, set up the database, run a worker, enqueue. `Soniq()` and the `soniq` command both read `SONIQ_DATABASE_URL`, so one setting covers all of them. `SONIQ_JOBS_MODULES` tells the worker which modules to import so it can find your `@soniq.job()` definitions.
 
 ## Transactional enqueue
 
@@ -49,7 +52,7 @@ The reason most teams choose a Postgres-backed queue. Enqueue a job inside the s
 # connection works here; it does not have to be Soniq's pool. If your
 # app already has its own pool (or a SQLAlchemy session), pass that
 # connection instead - see docs/guides/transactional-enqueue.md.
-async with app.backend.acquire() as conn:
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         # Your business write. The order row only becomes visible once
         # this transaction commits.
@@ -62,7 +65,7 @@ async with app.backend.acquire() as conn:
         # soniq_jobs as part of *this* COMMIT, not a separate one.
         # connection=conn is the only thing that differs from a normal
         # enqueue() call.
-        await app.enqueue(
+        await soniq.enqueue(
             send_invoice,
             connection=conn,
             order_id=order_id,
@@ -106,7 +109,7 @@ Soniq uses your existing PostgreSQL. One dependency. One place your data lives. 
 - **Dead-letter queue** - failed jobs preserved for inspection and manual replay
 - **Job priorities** - lower number = higher priority, processed first
 - **Scheduled jobs** - run at a specific time or after a delay
-- **Recurring jobs** - cron-based recurring schedules with `@app.periodic(cron="0 * * * *")`
+- **Recurring jobs** - cron-based recurring schedules with `@soniq.periodic(cron="0 * * * *")`
 - **Transactional enqueue** - atomic with your database writes
 - **Multiple queues** - route jobs by type, run dedicated workers per queue
 - **Middleware hooks** - `before_job`, `after_job`, `on_error` for logging, metrics, tracing
