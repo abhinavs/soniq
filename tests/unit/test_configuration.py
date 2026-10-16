@@ -466,3 +466,37 @@ class TestCrossServiceSettings:
 
         settings = get_settings(reload=True)
         assert settings.task_name_pattern == r"^.+$"
+
+
+class TestSoniqNoArgs:
+    """Soniq() with no arguments reads SONIQ_DATABASE_URL and .env."""
+
+    def test_reads_env_var(self, monkeypatch, tmp_path):
+        from soniq import Soniq
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SONIQ_DATABASE_URL", "postgresql://envhost/envdb")
+        assert Soniq().settings.database_url == "postgresql://envhost/envdb"
+
+    def test_reads_dotenv_file(self, monkeypatch, tmp_path):
+        from soniq import Soniq
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("SONIQ_DATABASE_URL", raising=False)
+        # an earlier test in this file leaks the lowercase spelling
+        monkeypatch.delenv("soniq_database_url", raising=False)
+        (tmp_path / ".env").write_text(
+            "SONIQ_DATABASE_URL=postgresql://filehost/filedb\n"
+        )
+        assert Soniq().settings.database_url == "postgresql://filehost/filedb"
+
+    def test_explicit_argument_wins(self, monkeypatch, tmp_path):
+        from soniq import Soniq
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SONIQ_DATABASE_URL", "postgresql://envhost/envdb")
+        (tmp_path / ".env").write_text(
+            "SONIQ_DATABASE_URL=postgresql://filehost/filedb\n"
+        )
+        app = Soniq(database_url="postgresql://argshost/argsdb")
+        assert app.settings.database_url == "postgresql://argshost/argsdb"
