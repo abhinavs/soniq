@@ -1,13 +1,13 @@
 # Soniq
 
-> Background jobs for Python, powered by the PostgreSQL you already have. No Redis, no separate broker. Async-native workers, transactional enqueue (insert the job in the same DB transaction as your business write), built-in dashboard, scheduler, and dead-letter queue.
+> Background jobs for FastAPI and any asyncio app, stored in the PostgreSQL you already have. No Redis, no separate broker. Async-native workers, transactional enqueue (insert the job in the same DB transaction as your business write), built-in dashboard, scheduler, and dead-letter queue.
 
 This file is for AI agents and indexing tools following the [llms.txt convention](https://llmstxt.org). It points to the canonical pages an agent needs to write working Soniq code without browsing the rest of the docs. The full canonical surface is also concatenated into [llms-full.txt](llms-full.txt) for one-shot context loading.
 
 If you are an agent generating Soniq code, the most common four mistakes are:
 
-1. Calling the decorator without parens (`@app.job` instead of `@app.job()`). Always use parens.
-2. Passing job arguments positionally to `enqueue` (`await app.enqueue(send, "a@b.com")`). Job args are keyword-only - use `to="a@b.com"`.
+1. Calling the decorator without parens (`@soniq.job` instead of `@soniq.job()`). Always use parens.
+2. Passing job arguments positionally to `enqueue` (`await soniq.enqueue(send, "a@b.com")`). Job args are keyword-only - use `to="a@b.com"`.
 3. Forgetting `await` on `enqueue` from sync code. Wrap in `asyncio.run(...)` for one-shot scripts.
 4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
 
@@ -15,48 +15,53 @@ Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brie
 
 ## Start here
 
-- [Quickstart](quickstart.md): five-minute path from `pip install` to first job. Canonical shape of `Soniq(database_url=...)`, `@app.job()`, `await app.enqueue(...)`, `soniq setup`, `soniq worker`.
+- [Quickstart](quickstart.md): five-minute path from `pip install` to first job. Canonical shape of `Soniq(database_url=...)`, `@soniq.job()`, `await soniq.enqueue(...)`, `soniq setup`, `soniq worker myapp.jobs:soniq`.
 - [Why Soniq?](why-soniq.md): the case for picking Soniq over Celery/RQ/Arq. Trade-offs and when NOT to use it.
+- [Compare tools](compare.md): Soniq next to Celery, RQ, arq, Taskiq and the other Postgres-backed queues, with when to pick each.
+- [Benchmarks](benchmarks.md): throughput and latency numbers, the machine, and how to reproduce them.
+- [Stability and versioning](stability.md): what stays stable between releases and how breaking changes are announced.
 - [AGENTS.md](../AGENTS.md): the agent-targeted brief - canonical patterns, anti-patterns, and where to look up details.
 
 ## Tutorial (read in order; ~30 minutes total)
 
-- [1. Defining jobs](tutorial/01-defining-jobs.md): `@app.job()`, decorator kwargs, validation with Pydantic, JobContext.
+- [1. Defining jobs](tutorial/01-defining-jobs.md): `@soniq.job()`, decorator kwargs, validation with Pydantic, JobContext.
 - [2. Running workers](tutorial/02-running-workers.md): `soniq worker`, concurrency, queues, signal handling.
 - [3. Retries](tutorial/03-retries.md): `retries`, `retry_delay`, `retry_backoff`, idempotency.
-- [4. Scheduling](tutorial/04-scheduling.md): `@app.periodic(cron=...)`, `@app.periodic(every=...)`, the scheduler service.
+- [4. Scheduling](tutorial/04-scheduling.md): `@soniq.periodic(cron=...)`, `@soniq.periodic(every=...)`, the scheduler service.
 - [5. Queues](tutorial/05-queues.md): queue routing, priority, per-queue workers.
 - [6. Transactional enqueue](tutorial/06-transactional-enqueue.md): atomic job + business write via `connection=conn`.
 
 ## Reference (look up by name)
 
-- [Python API: Soniq](api/soniq.md): `Soniq(...)` constructor, lifecycle (`ensure_initialized`, `close`), and `app.*` services (scheduler, dead_letter, webhooks).
-- [Python API: Jobs](api/jobs.md): `@app.job()`, `@app.periodic()`, `enqueue()`, `schedule()`, `JobContext`, `JobStatus`, the `soniq.schedules` cron DSL.
-- [Python API: Worker](api/worker.md): `soniq worker` CLI, `app.run_worker()`, env-var configuration, graceful shutdown.
-- [Python API: Hooks](api/hooks.md): `@app.before_job`, `@app.after_job`, `@app.on_error` for logging, metrics, tracing.
+- [Python API: Soniq](api/soniq.md): `Soniq(...)` constructor, lifecycle (`ensure_initialized`, `close`), and `soniq.*` services (scheduler, dead_letter, webhooks).
+- [Python API: Jobs](api/jobs.md): `@soniq.job()`, `@soniq.periodic()`, `enqueue()`, `schedule()`, `JobContext`, `JobStatus`, the `soniq.schedules` cron DSL.
+- [Python API: Worker](api/worker.md): `soniq worker` CLI, `soniq.run_worker()`, env-var configuration, graceful shutdown.
+- [Python API: Hooks](api/hooks.md): `@soniq.before_job`, `@soniq.after_job`, `@soniq.on_error` for logging, metrics, tracing.
 - [CLI commands](cli/commands.md): `setup`, `worker`, `scheduler`, `dashboard`, `inspect`, `dead-letter`, `status`, `migrate-status`.
 - [Dead-letter queue](reference/dead-letter.md): how the DLQ works, how to inspect, replay, and purge.
+- [Deprecations](deprecations.md): deprecated names, when they go away, and what to use instead.
 - [Glossary](reference/glossary.md): one-paragraph definitions for the words the docs use (job, handler, task name, worker, scheduler, queue, heartbeat, DLQ, replay, at-least-once, transactional enqueue, backend).
 
 ## Guides (task-shaped, not API-shaped)
 
-- [FastAPI](guides/fastapi.md): the canonical FastAPI producer shape, including lifespan management.
-- [Transactional enqueue](guides/transactional-enqueue.md): four working patterns (Soniq's pool, your own asyncpg pool, SQLAlchemy async, Tortoise) with end-to-end FastAPI examples.
+- [FastAPI](guides/fastapi.md): the `lifespan()` helper, running the worker in the API process, moving it out later, and moving off `BackgroundTasks`.
+- [Transactional enqueue](guides/transactional-enqueue.md): pass a SQLAlchemy `AsyncSession` or `AsyncConnection`, a raw asyncpg connection, or a psycopg 3 connection as `connection=`. Tortoise works through a private attribute.
 - [Common patterns](guides/common-patterns.md): idempotency, fan-out, retry policies, deduplication keys.
-- [Testing](guides/testing.md): in-memory backend, `run_once=True`, fixtures.
+- [Testing](guides/testing.md): in-memory backend, `run_once=True`, `soniq.testing.drain`, the opt-in pytest plugin.
 - [Cross-service jobs](guides/cross-service-jobs.md): enqueue by string name or `TaskRef` when producer and consumer live in different repos.
 
 ## Migration
 
 - [Migrating to Soniq](migration/index.md): trade-offs, what's the same on both paths, and how the migrations coexist with your old queue.
-- [From Celery](migration/from-celery.md): full concept map (`@app.task` -> `@app.job()`, Beat -> the scheduler, result backend -> `soniq_jobs.result`), what Celery has that Soniq does not (chains/chords, pickle, `bind=True`), module-at-a-time sequence.
-- [From RQ](migration/from-rq.md): concept map (registries collapse into a four-state `status` column, `Retry(...)` -> `@app.job(retries=...)`), six-step mechanical sequence.
+- [From Celery](migration/from-celery.md): full concept map (`@app.task` -> `@soniq.job()`, Beat -> the scheduler, result backend -> `soniq_jobs.result`), what Celery has that Soniq does not (chains/chords, pickle, `bind=True`), module-at-a-time sequence.
+- [From RQ](migration/from-rq.md): concept map (registries collapse into a four-state `status` column, `Retry(...)` -> `@soniq.job(retries=...)`), six-step mechanical sequence.
 
 ## Production
 
 - [Going to production](production/going-to-production.md): the eight things that matter for a healthy deploy.
 - [Deployment overview](production/deployment.md): prerequisites, queue routing, performance tuning. Pointers to [systemd](production/deployment-systemd.md), [Docker Compose](production/deployment-docker-compose.md), [Kubernetes](production/deployment-kubernetes.md), and [supervisor](production/deployment-supervisor.md).
 - [PostgreSQL tuning](production/postgres.md): connection pool sizing, autovacuum, partitioning.
+- [Migrations with Alembic](production/migrations.md): export Soniq's schema SQL with `soniq migrations export` and apply it from your own migration tool.
 - [Reliability](production/reliability.md): graceful shutdown, stuck-job recovery, scheduler failover.
 
 ## Recipes (copy-pasteable)
