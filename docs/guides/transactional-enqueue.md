@@ -8,20 +8,57 @@ When you pass `connection=conn` to `enqueue()`, the job row is inserted into `so
 
 Either both your business data and the job are committed, or neither is.
 
-## Whose pool is this?
+<a id="pattern-3-sqlalchemy-async"></a>
 
-Soniq manages an internal `asyncpg` connection pool that it uses for its own writes (claiming jobs, heartbeats, etc.). When you write transactional enqueue code, the question of *which pool* you should use comes up almost immediately. The short answer is: **any raw `asyncpg` connection inside an active transaction works**. It can be Soniq's pool, your own app's pool, or one extracted from your ORM session. Soniq doesn't care -- it just inserts the job row on the connection you hand it.
+## Pattern 1: Pass your SQLAlchemy session
 
-That gives you four working patterns, depending on what your app already uses:
+If your app uses SQLAlchemy async, pass the `AsyncSession` as `connection=`. Soniq writes the job on the same connection, inside the same transaction:
 
-1. **Raw `asyncpg`, Soniq's pool** -- simplest. No extra setup. Good for scripts and small services that don't already manage a pool.
-2. **Raw `asyncpg`, your own pool** -- you manage your own `asyncpg.Pool` and pass acquired connections directly. Best when you already have a pool for your application queries.
-3. **SQLAlchemy async** -- extract the underlying `asyncpg` connection from a `AsyncSession`. The most common FastAPI shape.
-4. **Tortoise ORM** -- pull `asyncpg` connection from `in_transaction()` via a private attribute (caveat below).
+```python
+from fastapi import Depends, FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
+from soniq import Soniq
 
-The four patterns are interchangeable. If your team uses SQLAlchemy, use the SQLAlchemy pattern. If you write raw SQL, the asyncpg pattern is fine.
+app = FastAPI()
+soniq = Soniq(database_url=os.environ["DATABASE_URL"])
 
-## Pattern 1: Raw asyncpg via Soniq's pool
+@app.post("/orders")
+async def create_order(
+    product_id: int,
+    quantity: int,
+    db: AsyncSession = Depends(get_db),
+):
+    async with db.begin():
+        order = Order(product_id=product_id, quantity=quantity)
+        db.add(order)
+        await db.flush()                      # populate order.id without committing
+        await soniq.enqueue(send_invoice, connection=db, order_id=order.id)
+    # SQLAlchemy commits here. Workers see the job at the same moment.
+    return {"order_id": order.id}
+```
+
+An `AsyncConnection` works too:
+
+```python
+async with engine.begin() as conn:
+    await conn.execute(insert(orders).values(id=order_id, total=total))
+    await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
+```
+
+Rules:
+
+- **Use the asyncpg driver.** Create the engine with a `postgresql+asyncpg://` URL. Other drivers raise a `SoniqError`. Support for psycopg is planned.
+- **Open a transaction first.** Call `enqueue()` inside `async with db.begin():` or after a statement that started one. A session with no active transaction raises a `SoniqError`.
+- **SQLAlchemy stays in charge.** Soniq does not open or commit a transaction. If SQLAlchemy rolls back, the job is removed too.
+- **Use the same database.** The engine must point at the database that holds the Soniq tables.
+
+Soniq does not import SQLAlchemy unless you pass a SQLAlchemy object.
+
+## Raw asyncpg connections (still supported)
+
+You can also pass any raw `asyncpg` connection inside an active transaction. It can come from Soniq's pool or from your own pool. The patterns below still work.
+
+## Pattern 2: Raw asyncpg via Soniq's pool
 
 The simplest pattern. Borrow a connection from Soniq's own backend pool. No second pool, no extraction step:
 
@@ -55,7 +92,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@soniq.job(queue="invoices", max_retries=5)
+@soniq.job(queue="invoices", retries=5)
 async def send_invoice(order_id: int):
     order = await get_order(order_id)
     await generate_and_send_invoice(order)
@@ -76,7 +113,7 @@ async def create_order(product_id: int, quantity: int):
 
 If the INSERT fails or anything else raises inside the transaction block, both the order row and the job are rolled back.
 
-## Pattern 2: Bring your own asyncpg pool
+## Pattern 3: Bring your own asyncpg pool
 
 If your app already manages its own `asyncpg.Pool` (common in apps that predate Soniq), you don't need to involve Soniq's pool at all. Pass the connection from *your* pool to `enqueue` and the job row goes through your transaction:
 
@@ -114,42 +151,7 @@ This is the cleanest pattern when you have an existing pool: there is no extract
 
 > Both pools must point at the **same Postgres database**. Soniq's job tables and your application tables share one database; the connection just has to be in a transaction on that database.
 
-## Pattern 3: SQLAlchemy async
-
-Most FastAPI apps use SQLAlchemy. Soniq does not have a native SQLAlchemy integration, but you can extract the underlying `asyncpg` connection from an `AsyncSession` and use it as you would any other:
-
-```python
-from fastapi import Depends, FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession
-
-app = FastAPI()
-soniq = Soniq(database_url=os.environ["DATABASE_URL"])
-
-@app.post("/orders")
-async def create_order(
-    product_id: int,
-    quantity: int,
-    db: AsyncSession = Depends(get_db),
-):
-    async with db.begin():
-        order = Order(product_id=product_id, quantity=quantity)
-        db.add(order)
-        await db.flush()                                  # populate order.id without committing
-
-        # Reach down to the raw asyncpg connection.
-        raw_conn = await db.connection()
-        asyncpg_conn = raw_conn.sync_connection.connection.driver_connection
-
-        await soniq.enqueue(send_invoice, connection=asyncpg_conn, order_id=order.id)
-    # SQLAlchemy commits here. The job becomes visible to workers at the same moment.
-```
-
-Two things to know:
-
-- **You must use the asyncpg driver.** `create_async_engine("postgresql+asyncpg://...")`. The connection-extraction path does not work with `psycopg3` async; the attribute chain is different.
-- **SQLAlchemy stays in charge.** Soniq does not open a separate transaction. It writes onto the same connection, inside the same transaction, that SQLAlchemy is managing. When SQLAlchemy commits, the job becomes visible.
-
-## Pattern 4: Tortoise ORM
+## Pattern 4: Tortoise ORM (still supported)
 
 Tortoise exposes the raw `asyncpg` connection on the transaction context, but only via a private attribute. It works today; treat it as a soft API.
 

@@ -669,6 +669,16 @@ class Soniq:
 
         if connection is not None:
             if isinstance(self._backend, PostgresBackend):
+                # A raw asyncpg connection is used as-is. An SQLAlchemy
+                # AsyncSession / AsyncConnection is unwrapped to its asyncpg
+                # connection. The module check avoids importing SQLAlchemy.
+                if (
+                    not isinstance(connection, asyncpg.Connection)
+                    and type(connection).__module__.split(".", 1)[0] == "sqlalchemy"
+                ):
+                    from .integrations.sqlalchemy import to_asyncpg_connection
+
+                    connection = await to_asyncpg_connection(connection)
                 txn_id = await self._backend.create_job_transactional(
                     connection=connection,
                     job_id=job_id,
