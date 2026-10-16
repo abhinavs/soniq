@@ -63,6 +63,7 @@ class Worker:
         concurrency: int = 4,
         run_once: bool = False,
         queues: Optional[List[str]] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> bool:
         """
         Run the worker.
@@ -71,6 +72,9 @@ class Worker:
             concurrency: Number of concurrent job processing tasks
             run_once: If True, process available jobs once and exit
             queues: Queue names to process. None means all queues.
+            shutdown_event: Optional event that starts a graceful shutdown when
+                set. When given, the worker installs no signal handlers and the
+                caller owns shutdown. Ignored when run_once is True.
 
         Returns:
             True if any jobs were processed
@@ -90,7 +94,7 @@ class Worker:
             if run_once:
                 return await self.run_once(queues)
             else:
-                return await self._run_continuous(concurrency, queues)
+                return await self._run_continuous(concurrency, queues, shutdown_event)
         finally:
             logger.info("Worker stopped")
 
@@ -168,13 +172,17 @@ class Worker:
         return jobs_processed > 0
 
     async def _run_continuous(
-        self, concurrency: int, queues: Optional[List[str]] = None
+        self,
+        concurrency: int,
+        queues: Optional[List[str]] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> bool:
         """Run continuous worker with heartbeat and signal handling."""
-        shutdown_event = asyncio.Event()
         notification_event = asyncio.Event()
         signal_handler = GracefulSignalHandler()
-        signal_handler.setup_signal_handlers(shutdown_event)
+        if shutdown_event is None:
+            shutdown_event = asyncio.Event()
+            signal_handler.setup_signal_handlers(shutdown_event)
 
         # Set up LISTEN/NOTIFY if backend supports push notifications
         listen_handle = None
