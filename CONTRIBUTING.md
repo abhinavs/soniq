@@ -4,9 +4,9 @@ Thanks for contributing. Soniq is a **single package** with optional extras for 
 
 ## Project Structure
 
-- `soniq/` — core runtime
-- `soniq/dashboard/` — web UI (optional, opt-in)
-- `soniq/features/` — scheduling, recurring, metrics, logging, webhooks, dead-letter, security (optional, opt-in)
+- `soniq/` - core runtime
+- `soniq/dashboard/` - web UI (optional, opt-in)
+- `soniq/features/` - scheduling, recurring, metrics, logging, webhooks, dead-letter, security (optional, opt-in)
 
 ## Getting Started
 
@@ -34,45 +34,43 @@ createdb soniq_test
 export SONIQ_DATABASE_URL="postgresql://localhost/soniq_test"
 ```
 
-Run migrations:
+Create the Soniq tables:
 
 ```bash
-python -c "
-import asyncio
-from soniq.db.migrations import run_migrations
-asyncio.run(run_migrations())
-"
+soniq setup
 ```
+
+The command is safe to run again. It reads `SONIQ_DATABASE_URL`.
 
 ## Running Tests
 
 The test suite is organized into tiers, from fastest (no dependencies) to slowest (requires Postgres):
 
-**Unit tests** — MemoryBackend, no database needed:
+**Unit tests** - MemoryBackend, no database needed:
 
 ```bash
 python -m pytest tests/unit/ -v
 ```
 
-**Backend conformance tests** — runs against Memory and SQLite backends to verify protocol compliance:
+**Backend conformance tests** - runs against Memory and SQLite backends to verify protocol compliance:
 
 ```bash
 python -m pytest tests/backend/ -v
 ```
 
-**Functional tests** — SQLite backend, no Postgres needed:
+**Functional tests** - SQLite backend, no Postgres needed:
 
 ```bash
 python -m pytest tests/functional/ -v
 ```
 
-**Integration tests** — requires the Postgres test database above:
+**Integration tests** - requires the Postgres test database above:
 
 ```bash
 python -m pytest tests/integration/ -v
 ```
 
-**Smoke tests** — quick sanity checks against the example code:
+**Smoke tests** - quick sanity checks against the example code:
 
 ```bash
 python -m pytest tests/smoke/ -v
