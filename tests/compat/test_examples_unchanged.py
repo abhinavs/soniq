@@ -120,12 +120,6 @@ def test_snooze_example_runs(examples):
     assert "Traceback" not in out, out
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known bug already in 0.0.5: enqueue(connection=conn) on a connection "
-    "from the user's own asyncpg pool fails, because soniq's JSONB codec is "
-    "only registered on soniq's own pool. Remove this marker once fixed.",
-)
 def test_transactional_example_serves_requests(examples):
     (examples["dir"] / "drive_transactional.py").write_text(TRANSACTIONAL_DRIVER)
     proc = _python(examples, "drive_transactional.py")
