@@ -923,7 +923,13 @@ class Soniq:
         concurrency: int = 4,
         run_once: bool = False,
         queues: Optional[List[str]] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> Any:
+        """Run a worker in this process.
+
+        Pass ``shutdown_event`` to control shutdown yourself: setting it drains
+        in-flight jobs, and no signal handlers are installed.
+        """
         await self._ensure_initialized()
         assert self._backend is not None  # narrowed after _ensure_initialized
 
@@ -949,6 +955,7 @@ class Soniq:
             concurrency=concurrency,
             run_once=run_once,
             queues=queues,
+            shutdown_event=shutdown_event,
         )
 
     def _maybe_warn_periodic_without_scheduler(self) -> None:
