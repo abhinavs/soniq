@@ -1,0 +1,1282 @@
+{
+  "Soniq": {
+    "__aenter__": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        }
+      ],
+      "type": "async"
+    },
+    "__aexit__": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "exc_type"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "exc_val"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "exc_tb"
+        }
+      ],
+      "type": "async"
+    },
+    "__init__": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "database_url"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "backend"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "retry_policy"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "metrics_sink"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "plugins"
+        },
+        {
+          "default": false,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "autoload_plugins"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "settings_overrides"
+        }
+      ],
+      "type": "sync"
+    },
+    "after_job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "fn"
+        }
+      ],
+      "type": "sync"
+    },
+    "backend": {
+      "settable": false,
+      "type": "property"
+    },
+    "before_job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "fn"
+        }
+      ],
+      "type": "sync"
+    },
+    "cancel_job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "job_id"
+        }
+      ],
+      "type": "async"
+    },
+    "cli": {
+      "settable": false,
+      "type": "property"
+    },
+    "close": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        }
+      ],
+      "type": "async"
+    },
+    "dashboard": {
+      "settable": false,
+      "type": "property"
+    },
+    "dashboard_data": {
+      "settable": false,
+      "type": "property"
+    },
+    "dead_letter": {
+      "settable": false,
+      "type": "property"
+    },
+    "delete_job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "job_id"
+        }
+      ],
+      "type": "async"
+    },
+    "enqueue": {
+      "params": [
+        {
+          "kind": "POSITIONAL_ONLY",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_ONLY",
+          "name": "target"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "args"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "queue"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "priority"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "scheduled_at"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "unique"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "dedup_key"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "connection"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "func_kwargs"
+        }
+      ],
+      "type": "async"
+    },
+    "enqueue_many": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "target"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "args_list"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "queue"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "priority"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "scheduled_at"
+        }
+      ],
+      "type": "async"
+    },
+    "ensure_initialized": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        }
+      ],
+      "type": "async"
+    },
+    "get_job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "job_id"
+        }
+      ],
+      "type": "async"
+    },
+    "get_queue_stats": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        }
+      ],
+      "type": "async"
+    },
+    "get_result": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "job_id"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "result_model"
+        }
+      ],
+      "type": "async"
+    },
+    "is_closed": {
+      "settable": false,
+      "type": "property"
+    },
+    "is_initialized": {
+      "settable": false,
+      "type": "property"
+    },
+    "job": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "kwargs"
+        }
+      ],
+      "type": "sync"
+    },
+    "list_jobs": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "queue"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "status"
+        },
+        {
+          "default": 100,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "limit"
+        },
+        {
+          "default": 0,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "offset"
+        }
+      ],
+      "type": "async"
+    },
+    "logs": {
+      "settable": false,
+      "type": "property"
+    },
+    "metrics_sink": {
+      "settable": true,
+      "type": "property"
+    },
+    "middleware": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "fn"
+        }
+      ],
+      "type": "sync"
+    },
+    "migrations": {
+      "settable": false,
+      "type": "property"
+    },
+    "on_error": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "fn"
+        }
+      ],
+      "type": "sync"
+    },
+    "periodic": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "cron"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "every"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "job_kwargs"
+        }
+      ],
+      "type": "sync"
+    },
+    "plugins": {
+      "settable": false,
+      "type": "property"
+    },
+    "registry": {
+      "settable": false,
+      "type": "property"
+    },
+    "retry_policy": {
+      "settable": true,
+      "type": "property"
+    },
+    "run_worker": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "default": 4,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "concurrency"
+        },
+        {
+          "default": false,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "run_once"
+        },
+        {
+          "default": null,
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "queues"
+        }
+      ],
+      "type": "async"
+    },
+    "schedule": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "target"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "run_at"
+        },
+        {
+          "default": null,
+          "kind": "KEYWORD_ONLY",
+          "name": "args"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "kwargs"
+        }
+      ],
+      "type": "async"
+    },
+    "scheduler": {
+      "settable": false,
+      "type": "property"
+    },
+    "settings": {
+      "settable": false,
+      "type": "property"
+    },
+    "setup": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        }
+      ],
+      "type": "async"
+    },
+    "signing": {
+      "settable": false,
+      "type": "property"
+    },
+    "use": {
+      "params": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "plugin"
+        }
+      ],
+      "type": "sync"
+    },
+    "webhooks": {
+      "settable": false,
+      "type": "property"
+    }
+  },
+  "cli": {
+    "": {
+      "--plugins": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--plugins"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "plugins",
+        "nargs": null,
+        "required": false,
+        "type": null
+      }
+    },
+    "dashboard": {
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--host": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--host"
+        ],
+        "choices": null,
+        "default": "127.0.0.1",
+        "dest": "host",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--jobs-modules": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--jobs-modules"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "jobs_modules",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--port": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--port"
+        ],
+        "choices": null,
+        "default": 6161,
+        "dest": "port",
+        "nargs": null,
+        "required": false,
+        "type": "int"
+      },
+      "--reload": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--reload"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "reload",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      }
+    },
+    "dead-letter": {
+      "--all": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--all"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "all",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--days": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--days"
+        ],
+        "choices": null,
+        "default": 30,
+        "dest": "days",
+        "nargs": null,
+        "required": false,
+        "type": "int"
+      },
+      "--dry-run": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--dry-run"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "dry_run",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "--filter": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--filter"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "filter",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--format": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--format"
+        ],
+        "choices": [
+          "csv",
+          "json"
+        ],
+        "default": "csv",
+        "dest": "format",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--jobs-modules": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--jobs-modules"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "jobs_modules",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--limit": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--limit"
+        ],
+        "choices": null,
+        "default": 50,
+        "dest": "limit",
+        "nargs": null,
+        "required": false,
+        "type": "int"
+      },
+      "--output": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--output"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "output",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--yes": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--yes",
+          "-y"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "yes",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "action": {
+        "action": "_StoreAction",
+        "aliases": [],
+        "choices": [
+          "list",
+          "replay",
+          "delete",
+          "cleanup",
+          "export"
+        ],
+        "default": null,
+        "dest": "action",
+        "nargs": null,
+        "required": true,
+        "type": null
+      },
+      "job_ids": {
+        "action": "_StoreAction",
+        "aliases": [],
+        "choices": null,
+        "default": null,
+        "dest": "job_ids",
+        "nargs": "*",
+        "required": false,
+        "type": null
+      }
+    },
+    "inspect": {
+      "--cleanup": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--cleanup"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "cleanup",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--schedules": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--schedules"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "schedules",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "--stale": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--stale"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "stale",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      }
+    },
+    "migrate-status": {
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      }
+    },
+    "scheduler": {
+      "--check-interval": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--check-interval"
+        ],
+        "choices": null,
+        "default": 60,
+        "dest": "check_interval",
+        "nargs": null,
+        "required": false,
+        "type": "int"
+      },
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--jobs-modules": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--jobs-modules"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "jobs_modules",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--log-level": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--log-level"
+        ],
+        "choices": [
+          "DEBUG",
+          "INFO",
+          "WARNING",
+          "ERROR",
+          "CRITICAL"
+        ],
+        "default": null,
+        "dest": "log_level",
+        "nargs": null,
+        "required": false,
+        "type": null
+      }
+    },
+    "setup": {
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      }
+    },
+    "status": {
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--jobs": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--jobs"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "jobs",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      },
+      "--verbose": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--verbose"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "verbose",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      }
+    },
+    "tasks-check": {
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "package": {
+        "action": "_StoreAction",
+        "aliases": [],
+        "choices": null,
+        "default": null,
+        "dest": "package",
+        "nargs": "?",
+        "required": false,
+        "type": null
+      }
+    },
+    "worker": {
+      "--concurrency": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--concurrency"
+        ],
+        "choices": null,
+        "default": 4,
+        "dest": "concurrency",
+        "nargs": null,
+        "required": false,
+        "type": "int"
+      },
+      "--database-url": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--database-url"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "database_url",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--jobs-modules": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--jobs-modules"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "jobs_modules",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--log-level": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--log-level"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "log_level",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--queues": {
+        "action": "_StoreAction",
+        "aliases": [
+          "--queues"
+        ],
+        "choices": null,
+        "default": null,
+        "dest": "queues",
+        "nargs": null,
+        "required": false,
+        "type": null
+      },
+      "--run-once": {
+        "action": "_StoreTrueAction",
+        "aliases": [
+          "--run-once"
+        ],
+        "choices": null,
+        "default": false,
+        "dest": "run_once",
+        "nargs": 0,
+        "required": false,
+        "type": null
+      }
+    }
+  },
+  "enqueue": {
+    "keywords": [
+      "args",
+      "connection",
+      "dedup_key",
+      "priority",
+      "queue",
+      "scheduled_at",
+      "unique"
+    ],
+    "var_keyword": true
+  },
+  "enqueue_many": {
+    "keywords": [
+      "args_list",
+      "priority",
+      "queue",
+      "scheduled_at",
+      "target"
+    ],
+    "var_keyword": false
+  },
+  "settings": {
+    "cleanup_interval": {
+      "default": 300.0,
+      "env": "SONIQ_CLEANUP_INTERVAL"
+    },
+    "concurrency": {
+      "default": 4,
+      "env": "SONIQ_CONCURRENCY"
+    },
+    "database_url": {
+      "default": "postgresql://postgres@localhost/soniq",
+      "env": "SONIQ_DATABASE_URL"
+    },
+    "debug": {
+      "default": false,
+      "env": "SONIQ_DEBUG"
+    },
+    "enqueue_validation": {
+      "default": "strict",
+      "env": "SONIQ_ENQUEUE_VALIDATION"
+    },
+    "environment": {
+      "default": "production",
+      "env": "SONIQ_ENVIRONMENT"
+    },
+    "error_retry_delay": {
+      "default": 5.0,
+      "env": "SONIQ_ERROR_RETRY_DELAY"
+    },
+    "heartbeat_interval": {
+      "default": 5.0,
+      "env": "SONIQ_HEARTBEAT_INTERVAL"
+    },
+    "heartbeat_timeout": {
+      "default": 300.0,
+      "env": "SONIQ_HEARTBEAT_TIMEOUT"
+    },
+    "job_timeout": {
+      "default": 300.0,
+      "env": "SONIQ_JOB_TIMEOUT"
+    },
+    "jobs_modules": {
+      "default": "",
+      "env": "SONIQ_JOBS_MODULES"
+    },
+    "log_level": {
+      "default": "INFO",
+      "env": "SONIQ_LOG_LEVEL"
+    },
+    "max_retries": {
+      "default": 3,
+      "env": "SONIQ_MAX_RETRIES"
+    },
+    "poll_interval": {
+      "default": 5.0,
+      "env": "SONIQ_POLL_INTERVAL"
+    },
+    "pool_headroom": {
+      "default": 2,
+      "env": "SONIQ_POOL_HEADROOM"
+    },
+    "pool_max_size": {
+      "default": 20,
+      "env": "SONIQ_POOL_MAX_SIZE"
+    },
+    "pool_min_size": {
+      "default": 5,
+      "env": "SONIQ_POOL_MIN_SIZE"
+    },
+    "priority": {
+      "default": 100,
+      "env": "SONIQ_PRIORITY"
+    },
+    "producer_id": {
+      "default": "auto",
+      "env": "SONIQ_PRODUCER_ID"
+    },
+    "queues": {
+      "default": [
+        "default"
+      ],
+      "env": "SONIQ_QUEUES"
+    },
+    "result_ttl": {
+      "default": 300,
+      "env": "SONIQ_RESULT_TTL"
+    },
+    "route_map": {
+      "default": {},
+      "env": "SONIQ_ROUTE_MAP"
+    },
+    "shutdown_timeout": {
+      "default": 30.0,
+      "env": "SONIQ_SHUTDOWN_TIMEOUT"
+    },
+    "snooze_max_seconds": {
+      "default": 86400,
+      "env": "SONIQ_SNOOZE_MAX_SECONDS"
+    },
+    "sync_handler_grace_seconds": {
+      "default": null,
+      "env": "SONIQ_SYNC_HANDLER_GRACE_SECONDS"
+    },
+    "sync_handler_pool_size": {
+      "default": 8,
+      "env": "SONIQ_SYNC_HANDLER_POOL_SIZE"
+    },
+    "task_name_pattern": {
+      "default": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "env": "SONIQ_TASK_NAME_PATTERN"
+    }
+  },
+  "soniq.__all__": [
+    "DASHBOARD_AVAILABLE",
+    "JobContext",
+    "JobStatus",
+    "Snooze",
+    "Soniq",
+    "TaskRef",
+    "cron",
+    "daily",
+    "every",
+    "monthly",
+    "task_ref",
+    "weekly"
+  ],
+  "soniq.testing.__all__": [
+    "MemoryBackend",
+    "make_app",
+    "wait_until"
+  ],
+  "tables": {
+    "soniq_dead_letter_jobs": {
+      "args": "jsonb",
+      "attempts": "integer",
+      "created_at": "timestamp with time zone",
+      "dead_letter_reason": "text",
+      "id": "uuid",
+      "job_name": "text",
+      "last_error": "text",
+      "last_resurrection_at": "timestamp with time zone",
+      "max_attempts": "integer",
+      "moved_to_dead_letter_at": "timestamp with time zone",
+      "original_created_at": "timestamp with time zone",
+      "priority": "integer",
+      "queue": "text",
+      "resurrection_count": "integer",
+      "tags": "jsonb"
+    },
+    "soniq_jobs": {
+      "args": "jsonb",
+      "args_hash": "text",
+      "attempts": "integer",
+      "created_at": "timestamp with time zone",
+      "dedup_key": "text",
+      "expires_at": "timestamp with time zone",
+      "id": "uuid",
+      "job_name": "text",
+      "last_error": "text",
+      "max_attempts": "integer",
+      "priority": "integer",
+      "producer_id": "text",
+      "queue": "text",
+      "result": "jsonb",
+      "scheduled_at": "timestamp with time zone",
+      "status": "text",
+      "unique_job": "boolean",
+      "updated_at": "timestamp with time zone",
+      "worker_id": "uuid"
+    },
+    "soniq_logs": {
+      "created_at": "timestamp with time zone",
+      "exception_data": "jsonb",
+      "extra_data": "jsonb",
+      "function": "text",
+      "id": "integer",
+      "job_id": "text",
+      "job_name": "text",
+      "level": "text",
+      "line_number": "integer",
+      "logger_name": "text",
+      "message": "text",
+      "module": "text",
+      "performance_data": "jsonb",
+      "queue": "text",
+      "request_id": "text",
+      "timestamp": "timestamp with time zone"
+    },
+    "soniq_migrations": {
+      "applied_at": "timestamp without time zone",
+      "checksum": "text",
+      "id": "integer",
+      "name": "text",
+      "version": "character varying"
+    },
+    "soniq_recurring_jobs": {
+      "created_at": "timestamp with time zone",
+      "id": "uuid",
+      "job_kwargs": "jsonb",
+      "job_name": "text",
+      "last_job_id": "uuid",
+      "last_run": "timestamp with time zone",
+      "max_attempts": "integer",
+      "next_run": "timestamp with time zone",
+      "priority": "integer",
+      "queue": "text",
+      "run_count": "integer",
+      "schedule_type": "text",
+      "schedule_value": "text",
+      "status": "text",
+      "updated_at": "timestamp with time zone"
+    },
+    "soniq_task_registry": {
+      "args_model_repr": "text",
+      "last_seen_at": "timestamp with time zone",
+      "task_name": "text",
+      "worker_id": "text"
+    },
+    "soniq_webhook_deliveries": {
+      "attempts": "integer",
+      "created_at": "timestamp with time zone",
+      "delivered_at": "timestamp with time zone",
+      "endpoint_id": "text",
+      "event": "text",
+      "id": "text",
+      "last_error": "text",
+      "max_attempts": "integer",
+      "next_retry_at": "timestamp with time zone",
+      "payload": "jsonb",
+      "response_body": "text",
+      "response_status": "integer",
+      "status": "text"
+    },
+    "soniq_webhook_endpoints": {
+      "active": "boolean",
+      "created_at": "timestamp with time zone",
+      "events": "jsonb",
+      "headers": "jsonb",
+      "id": "text",
+      "max_retries": "integer",
+      "secret": "text",
+      "timeout_seconds": "integer",
+      "updated_at": "timestamp with time zone",
+      "url": "text"
+    },
+    "soniq_workers": {
+      "concurrency": "integer",
+      "hostname": "text",
+      "id": "uuid",
+      "last_heartbeat": "timestamp with time zone",
+      "metadata": "jsonb",
+      "pid": "integer",
+      "queues": "ARRAY",
+      "started_at": "timestamp with time zone",
+      "status": "text",
+      "version": "text"
+    }
+  }
+}
