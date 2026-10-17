@@ -7,7 +7,7 @@ body:
     attributes:
       label: Soniq version
       description: Output of `pip show soniq`
-      placeholder: "0.0.5"
+      placeholder: "0.1.0"
     validations:
       required: true
   - type: input
