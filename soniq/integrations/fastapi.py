@@ -9,6 +9,7 @@ Requires FastAPI (or Starlette) in your environment. Nothing here imports it.
 
 import asyncio
 import logging
+import os
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, AsyncIterator, Callable, List, Optional
 
@@ -32,6 +33,10 @@ def lifespan(
     normal graceful path (in-flight jobs finish, or go back to the queue when
     ``shutdown_timeout`` expires), then closes ``soniq``.
 
+    Each process that runs this lifespan starts its own worker. With
+    ``uvicorn --workers 4`` you get four workers, so up to
+    ``4 x concurrency`` jobs run at once.
+
     ``extra`` is your own lifespan (a function taking the app and returning an
     async context manager). It runs inside this one: it starts after Soniq is
     ready and stops before the worker stops.
@@ -44,6 +49,12 @@ def lifespan(
         worker_task: Optional["asyncio.Task[Any]"] = None
         try:
             if run_worker:
+                logger.info(
+                    "Starting in-process Soniq worker (pid %d, concurrency %d). "
+                    "Every process that runs this lifespan starts its own worker.",
+                    os.getpid(),
+                    concurrency,
+                )
                 worker_task = asyncio.create_task(
                     soniq.run_worker(
                         concurrency=concurrency, queues=queues, shutdown_event=stop

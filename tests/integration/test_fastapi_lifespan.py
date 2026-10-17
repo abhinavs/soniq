@@ -1,6 +1,7 @@
 """FastAPI lifespan helper: in-process worker, graceful stop, opt-in only."""
 
 import asyncio
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -114,3 +115,14 @@ def test_extra_lifespan_runs_inside():
     with TestClient(FastAPI(lifespan=lifespan(soniq, extra=mine))):
         pass
     assert events == [("start", True), ("stop", False)]
+
+
+def test_in_process_worker_logs_pid_and_concurrency(caplog):
+    soniq = Soniq(database_url=TEST_DATABASE_URL)
+    app = FastAPI(lifespan=lifespan(soniq, run_worker=True, concurrency=3))
+
+    with caplog.at_level("INFO", logger="soniq.integrations.fastapi"):
+        with TestClient(app):
+            pass
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(f"pid {os.getpid()}" in m and "concurrency 3" in m for m in messages)
