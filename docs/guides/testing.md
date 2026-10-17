@@ -30,6 +30,8 @@ The plugin gives you two fixtures:
 - `soniq_memory`: a `Soniq` on the in-memory backend.
 - `soniq_pg`: a `Soniq` on PostgreSQL. It reads `SONIQ_DATABASE_URL` and skips the test if the variable is not set. The test runs in one transaction. The plugin rolls it back at the end, so the test leaves no rows behind. It creates the Soniq tables first if they do not exist.
 
+    Point `SONIQ_DATABASE_URL` at a dedicated, empty test database. Draining in a `soniq_pg` test runs every queued job in that database, including leftover jobs from other runs, with their real side effects.
+
 To use the jobs of your own app, point the fixture at it with the `soniq` marker:
 
 ```python
