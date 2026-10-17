@@ -23,6 +23,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from soniq.app import Soniq
+from soniq.discovery import _ensure_cwd_on_path
 from soniq.task_ref import TaskRef
 
 from ._helpers import database_url_argument
@@ -61,6 +62,7 @@ def _load_task_refs_from_package(package_path: str) -> List[Dict[str, Any]]:
             sys.path.insert(0, parent)
         module = importlib.import_module(package_name)
     else:
+        _ensure_cwd_on_path()
         module = importlib.import_module(package_path)
 
     found: List[Dict[str, Any]] = []
