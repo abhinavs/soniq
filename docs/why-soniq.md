@@ -28,10 +28,10 @@ Most Python job queues - Celery, RQ, Arq, Dramatiq - default to Redis as the bro
 Soniq sidesteps all of this by storing jobs as rows in the same Postgres database your app already uses. The jobs and the data are backed up together, monitored together, and - the part that matters most - transacted together.
 
 ```python
-async with app.backend.acquire() as conn:
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders (id, total) VALUES ($1, $2)", order_id, total)
-        await app.enqueue(send_invoice, connection=conn, order_id=order_id)
+        await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
         # Both writes commit together, or neither does.
 ```
 

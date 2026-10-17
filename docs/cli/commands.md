@@ -150,8 +150,8 @@ For each active worker, shows: hostname, PID, queues, concurrency, uptime, last
 heartbeat, and resource usage (CPU/memory) when available.
 
 The output also includes a **Recurring Schedules** section with the count of
-active and paused schedules registered via `@app.periodic(...)` or
-`app.scheduler.add(...)`. Note that scheduler liveness is leader-elected per
+active and paused schedules registered via `@soniq.periodic(...)` or
+`soniq.scheduler.add(...)`. Note that scheduler liveness is leader-elected per
 tick (no persistent process record), so `inspect` reports what is *registered*,
 not which scheduler process is currently the leader. To verify a scheduler
 process is up, check your process supervisor (systemd, Kubernetes, Docker).
@@ -276,7 +276,7 @@ soniq scheduler [APP] [--check-interval SECONDS] [--jobs-modules MODULES]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--check-interval` | `int` | `60` | Seconds between checks for due recurring jobs. |
-| `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (adds to, does not replace). The scheduler must import your `@app.periodic` definitions to know what to fire. |
+| `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (adds to, does not replace). The scheduler must import your `@soniq.periodic` definitions to know what to fire. |
 
 ```bash
 # Start the scheduler

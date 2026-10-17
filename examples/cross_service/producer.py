@@ -2,7 +2,7 @@
 Producer service - enqueues by name without owning the handler.
 
 Run after `soniq setup` and after the consumer.py script has registered
-the task name. The producer has no @app.job declarations of its own; it
+the task name. The producer has no @soniq.job() declarations of its own; it
 runs with SONIQ_ENQUEUE_VALIDATION=none so the unregistered name does
 not raise on the producer side.
 """

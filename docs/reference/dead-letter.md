@@ -63,7 +63,7 @@ soniq dead-letter export --format csv --output dead_jobs.csv
 ## Programmatic API
 
 The dead-letter API is reached through your `Soniq` instance:
-`app.dead_letter.<method>()`. The handle is constructed lazily on first
+`soniq.dead_letter.<method>()`. The handle is constructed lazily on first
 access and cached on the instance. Full method and type reference:
 [Dead-letter queue Python API](../api/dead-letter.md).
 
@@ -71,16 +71,16 @@ access and cached on the instance. Full method and type reference:
 from soniq import Soniq
 from soniq.features.dead_letter import DeadLetterFilter
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 # List all dead-letter jobs
-jobs = await app.dead_letter.list_dead_letter_jobs()
+jobs = await soniq.dead_letter.list_dead_letter_jobs()
 
 # Get a specific job
-job = await app.dead_letter.get_dead_letter_job("abc123-def456")
+job = await soniq.dead_letter.get_dead_letter_job("abc123-def456")
 
 # Replay with options
-new_job_id = await app.dead_letter.replay(
+new_job_id = await soniq.dead_letter.replay(
     "abc123-def456",
     reset_attempts=True,       # start fresh (default)
     new_max_attempts=10,       # give it more tries this time
@@ -88,10 +88,10 @@ new_job_id = await app.dead_letter.replay(
 )
 
 # Delete permanently
-await app.dead_letter.delete_dead_letter_job("abc123-def456")
+await soniq.dead_letter.delete_dead_letter_job("abc123-def456")
 
 # Get statistics
-stats = await app.dead_letter.get_dead_letter_stats(hours=24)
+stats = await soniq.dead_letter.get_dead_letter_stats(hours=24)
 print(f"Total: {stats.total_count}")
 print(f"By reason: {stats.by_reason}")
 print(f"Oldest job: {stats.oldest_job_age_hours:.1f} hours ago")
@@ -106,7 +106,7 @@ f = DeadLetterFilter(
     limit=50,
 )
 
-jobs = await app.dead_letter.list_dead_letter_jobs(f)
+jobs = await soniq.dead_letter.list_dead_letter_jobs(f)
 ```
 
 ### Bulk operations
@@ -114,7 +114,7 @@ jobs = await app.dead_letter.list_dead_letter_jobs(f)
 ```python
 f = DeadLetterFilter(job_names=["myapp.tasks.sync_inventory"])
 
-new_job_ids = await app.dead_letter.bulk_replay(
+new_job_ids = await soniq.dead_letter.bulk_replay(
     f, reset_attempts=True, new_max_attempts=5
 )
 print(f"Replayed {len(new_job_ids)} jobs")
@@ -129,7 +129,7 @@ When a job lands in the DLQ, follow this workflow:
 2. **Read the error.** The `last_error` field contains the exception message from the final attempt.
 
     ```python
-    job = await app.dead_letter.get_dead_letter_job(job_id)
+    job = await soniq.dead_letter.get_dead_letter_job(job_id)
     print(job.last_error)     # "ConnectionRefusedError: ..."
     print(job.attempts)       # 4 (tried 4 times)
     print(job.args)           # {"user_id": 42}
@@ -140,13 +140,13 @@ When a job lands in the DLQ, follow this workflow:
 4. **Replay.** Create a new job from the dead-letter entry. The original arguments are preserved; the DLQ row stays as the audit trail.
 
     ```python
-    new_id = await app.dead_letter.replay(job_id)
+    new_id = await soniq.dead_letter.replay(job_id)
     ```
 
 5. **Verify.** Check that the replayed job completes successfully.
 
     ```python
-    status = await app.get_job(new_id)
+    status = await soniq.get_job(new_id)
     ```
 
-> **Tip:** Set up monitoring on `app.dead_letter.get_dead_letter_stats()` to alert when jobs accumulate in the DLQ. A growing DLQ usually signals a systemic issue -- a down service, a bad deploy, or a data problem.
+> **Tip:** Set up monitoring on `soniq.dead_letter.get_dead_letter_stats()` to alert when jobs accumulate in the DLQ. A growing DLQ usually signals a systemic issue -- a down service, a bad deploy, or a data problem.

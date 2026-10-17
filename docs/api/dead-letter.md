@@ -1,7 +1,7 @@
 # Dead-letter queue
 
 The `DeadLetterService` handles jobs that exhausted every retry. It is reached
-through your `Soniq` instance as `app.dead_letter` - the handle is built lazily
+through your `Soniq` instance as `soniq.dead_letter` - the handle is built lazily
 on first access and cached on the instance, so it always talks to that
 instance's database.
 
@@ -12,9 +12,9 @@ For the table schema, the CLI, and a debugging walkthrough see
 from soniq import Soniq
 from soniq.features.dead_letter import DeadLetterFilter
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-jobs = await app.dead_letter.list_dead_letter_jobs(
+jobs = await soniq.dead_letter.list_dead_letter_jobs(
     DeadLetterFilter(job_names=["billing.charge"], limit=50)
 )
 for job in jobs:
@@ -123,7 +123,7 @@ knows the new row's attempt cap, so the job's module must be imported first
 | `new_queue` | `None` | Route the replayed job to a different queue. |
 
 ```python
-new_id = await app.dead_letter.replay(
+new_id = await soniq.dead_letter.replay(
     job.id, new_max_attempts=10, new_queue="retry-slow"
 )
 ```
@@ -165,7 +165,7 @@ async def cleanup_old_dead_letter_jobs(days: int = 30) -> int
 ```
 
 Delete rows older than `days` (by `moved_to_dead_letter_at`). Returns the count
-deleted. Good for a `@app.periodic` housekeeping job.
+deleted. Good for a `@soniq.periodic` housekeeping job.
 
 ### get_dead_letter_stats
 

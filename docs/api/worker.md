@@ -1,6 +1,6 @@
 # Worker
 
-Workers fetch jobs from the database, execute them, and update their status. **The primary way to run a worker is the `soniq worker` CLI** -- run it from your process manager (systemd, Kubernetes, supervisord) and let the manager handle restarts and scaling. The `Worker` class and `app.run_worker()` are documented here for advanced use cases (tests, embedding, custom orchestration).
+Workers fetch jobs from the database, execute them, and update their status. **The primary way to run a worker is the `soniq worker` CLI** -- run it from your process manager (systemd, Kubernetes, supervisord) and let the manager handle restarts and scaling. The `Worker` class and `soniq.run_worker()` are documented here for advanced use cases (tests, embedding, custom orchestration).
 
 
 ## soniq worker
@@ -19,9 +19,9 @@ Reads `SONIQ_DATABASE_URL` (and other `SONIQ_*` settings) from the environment. 
 The in-process entry point. Use this for tests or when embedding Soniq inside a larger Python application that owns the lifecycle.
 
 ```python
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-await app.run_worker(
+await soniq.run_worker(
     concurrency=4,
     run_once=False,
     queues=None,
@@ -38,8 +38,8 @@ await app.run_worker(
 
 ### What happens during run_worker
 
-1. The app auto-initializes if needed (connects to the database, runs lazy setup).
-2. A `Worker` instance is created with the app's backend, job registry, settings, and hooks.
+1. The instance auto-initializes if needed (connects to the database, runs lazy setup).
+2. A `Worker` instance is created with the instance's backend, job registry, settings, and hooks.
 3. In continuous mode, the worker registers itself in the database, starts a heartbeat loop, subscribes to `LISTEN/NOTIFY` for instant job pickup, and launches `concurrency` processing tasks.
 4. In `run_once` mode, the worker processes available jobs sequentially until the queue is empty, then returns.
 
@@ -89,7 +89,7 @@ worker = Worker(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `backend` | `StorageBackend` | (required) | The storage backend (PostgresBackend, SQLiteBackend, or MemoryBackend). |
-| `registry` | `JobRegistry` | (required) | Job registry containing all `@app.job()` registrations. |
+| `registry` | `JobRegistry` | (required) | Job registry containing all `@soniq.job()` registrations. |
 | `settings` | `SoniqSettings \| None` | `None` | Settings instance. Falls back to global settings when `None`. |
 | `hooks` | `dict \| None` | `None` | Hook dictionary with keys `"before_job"`, `"after_job"`, `"on_error"`, each mapping to a list of callables. |
 

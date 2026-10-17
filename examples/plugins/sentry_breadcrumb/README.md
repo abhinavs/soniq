@@ -34,11 +34,11 @@ way.
 from soniq import Soniq
 from sentry_breadcrumb import SentryBreadcrumbPlugin
 
-app = Soniq(
+soniq = Soniq(
     database_url="postgresql://...",
     plugins=[SentryBreadcrumbPlugin()],
 )
-await app.setup()  # plugin's on_startup runs here
+await soniq.setup()  # plugin's on_startup runs here
 ```
 
 Or via entry points (after `pip install`):
