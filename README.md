@@ -146,7 +146,7 @@ For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-bac
 A built-in web dashboard for inspecting jobs, queues, and recent failures. Read-only by default; opt in to retry/cancel/delete actions with `SONIQ_DASHBOARD_WRITE_ENABLED=true` (which also requires `SONIQ_DASHBOARD_API_KEY` as a safety interlock).
 
 <p align="left">
-  <img src="docs/assets/soniq_dashboard.png" width="800" alt="Soniq dashboard showing recent jobs, queue stats, and 24h performance metrics" />
+  <img src="docs/assets/soniq_dashboard.gif" width="800" alt="Animated Soniq dashboard: job counts and recent jobs update as signups and orders are processed" />
 </p>
 
 ```bash
