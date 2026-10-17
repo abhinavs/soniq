@@ -102,8 +102,8 @@ async def handle_dead_letter(args) -> int:
         if not modules:
             print(
                 "Error: 'replay' needs your job modules loaded to know the "
-                "target job's retry limits. Set SONIQ_JOBS_MODULES or pass "
-                "--jobs-modules.",
+                "target job's retry limits. Pass --app myapp.jobs:soniq, "
+                "set SONIQ_JOBS_MODULES or pass --jobs-modules.",
                 file=sys.stderr,
             )
             return 1
