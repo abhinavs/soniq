@@ -231,7 +231,7 @@ Plugins should pin a Soniq version range so a major Soniq release
 doesn't silently break them:
 
 ```toml
-dependencies = ["soniq>=0.0.2,<0.1.0"]
+dependencies = ["soniq>=0.1.0,<0.2.0"]
 ```
 
 The plugin contract (`install`, `on_startup`, `on_shutdown`) is part

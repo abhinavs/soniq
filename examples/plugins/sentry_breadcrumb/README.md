@@ -71,7 +71,7 @@ small.
 1. **Pick a SemVer-stable name and version.** Plugins should pin a
    Soniq range so a major Soniq release doesn't silently break them:
    ```toml
-   dependencies = ["soniq>=0.0.2,<0.1.0"]
+   dependencies = ["soniq>=0.1.0,<0.2.0"]
    ```
 
 2. **Implement `SoniqPlugin`.** A plain class with three required
