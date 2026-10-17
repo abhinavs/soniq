@@ -37,7 +37,7 @@ To use the jobs of your own app, point the fixture at it with the `soniq` marker
 ```python
 from soniq.testing import drain
 
-@pytest.mark.soniq(app="myapp.jobs:app")
+@pytest.mark.soniq(app="myapp.jobs:soniq")
 async def test_welcome_email(soniq_memory):
     from myapp.jobs import send_email
 
