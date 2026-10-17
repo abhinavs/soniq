@@ -105,7 +105,7 @@ def _parser_options(parser: argparse.ArgumentParser) -> dict:
                 "type": getattr(action.type, "__name__", action.type),
                 "choices": list(action.choices) if action.choices else None,
                 "nargs": action.nargs,
-                "required": action.required,
+                "required": action.required and action.nargs != "*",
             }
         )
     return out

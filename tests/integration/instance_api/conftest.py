@@ -8,13 +8,14 @@ and create their own isolated Soniq instances.
 import os
 
 import pytest
+import pytest_asyncio
 
 from tests.db_utils import TEST_DATABASE_URL, clear_table, create_test_database
 
 os.environ["SONIQ_DATABASE_URL"] = TEST_DATABASE_URL
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def setup_instance_test_database():
     """Set up test database once per test session."""
     await create_test_database()

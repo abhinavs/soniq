@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import pytest
+import pytest_asyncio
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -58,7 +59,7 @@ def run_cli_command(cmd_args, timeout=10, expect_success=True, extra_env=None):
     return result
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def setup_test_databases():
     """Set up test databases for database URL integration tests."""
     test_databases = [

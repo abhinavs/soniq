@@ -2,6 +2,7 @@ import asyncio
 import os
 
 import pytest
+import pytest_asyncio
 
 from soniq import Soniq
 from tests.db_utils import TEST_DATABASE_URL, clear_table, create_test_database
@@ -20,7 +21,7 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def setup_test_database():
     """Set up test database once for the entire test session."""
     await create_test_database()

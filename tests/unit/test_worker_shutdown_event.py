@@ -4,8 +4,6 @@ import asyncio
 import signal
 import time
 
-import pytest
-
 from soniq.core.registry import JobRegistry
 from soniq.testing.memory_backend import MemoryBackend
 from tests.unit.test_shutdown_state_machine import (
