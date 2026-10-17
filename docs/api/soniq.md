@@ -9,7 +9,7 @@ the same process.
 ```python
 from soniq import Soniq
 
-app = Soniq(
+soniq = Soniq(
     database_url="postgresql://localhost/myapp",
     backend=None,
     **settings_overrides,
@@ -46,18 +46,18 @@ Common settings you can pass as keyword arguments:
 
 Optional features no longer require `*_enabled` flags. Each feature is
 "on" iff the user wires it up by accessing the corresponding lazy
-property on the app:
+property on the instance:
 
 ```python
-await app.webhooks.register(url="https://...")     # webhooks
-await app.dead_letter.list_jobs()                  # dead-letter queue
-await app.scheduler.add(name=..., cron="0 9 * * *")
-await app.signing.encrypt("plaintext")
-await app.logs.search_logs("error")
+await soniq.webhooks.register(url="https://...")     # webhooks
+await soniq.dead_letter.list_jobs()                  # dead-letter queue
+await soniq.scheduler.add(name=..., cron="0 9 * * *")
+await soniq.signing.encrypt("plaintext")
+await soniq.logs.search_logs("error")
 ```
 
 The dashboard is wired up by running the dashboard process
-(`soniq dashboard` or `create_dashboard_app(app)`); HTTP-level write
+(`soniq dashboard` or `create_dashboard_app(soniq)`); HTTP-level write
 authorization is enforced by `SONIQ_DASHBOARD_API_KEY` or by being a
 loopback caller.
 
@@ -70,7 +70,7 @@ Closes the connection pool and releases resources. Calling `close()` twice is
 harmless.
 
 ```python
-await app.close()
+await soniq.close()
 ```
 
 ### Async context manager
@@ -78,8 +78,8 @@ await app.close()
 `close()` is called automatically on exit:
 
 ```python
-async with Soniq(database_url="postgresql://localhost/myapp") as app:
-    await app.enqueue(my_job, message="hello")
+async with Soniq(database_url="postgresql://localhost/myapp") as soniq:
+    await soniq.enqueue(my_job, message="hello")
 ```
 
 The connection pool initializes lazily on first use. No explicit init call is needed.
@@ -97,11 +97,11 @@ For workflows that need raw SQL alongside an enqueue (for example,
 connection from the backend:
 
 ```python
-await app.ensure_initialized()
-async with app.backend.acquire() as conn:
+await soniq.ensure_initialized()
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders ...")
-        await app.enqueue(send_receipt, connection=conn, order_id=42)
+        await soniq.enqueue(send_receipt, connection=conn, order_id=42)
 ```
 
 `backend.acquire()` is an async context manager that lends a pooled
@@ -113,7 +113,7 @@ connection and releases it on exit. Available on the PostgreSQL backend.
 Returns a list of dictionaries, one per queue, sorted by queue name:
 
 ```python
-stats = await app.get_queue_stats()
+stats = await soniq.get_queue_stats()
 ```
 
 Each dictionary contains:
@@ -146,7 +146,7 @@ These are thin wrappers over the storage backend. Each accepts a `job_id` string
 | `delete_job(job_id)` | `bool` | `True` if the job was deleted. |
 | `list_jobs(queue?, status?, limit=100, offset=0)` | `list[dict]` | Filtered list of job records. |
 
-To re-run a job that exhausted its retries, use `app.dead_letter.replay(job_id)`
+To re-run a job that exhausted its retries, use `soniq.dead_letter.replay(job_id)`
 (see the [dead-letter docs](../reference/dead-letter.md)).
 
 

@@ -9,7 +9,7 @@ Soniq retries failed jobs automatically. Every job gets 3 retries by default (4 
 ## Configuration
 
 ```python
-@app.job(
+@soniq.job(
     max_retries=5,        # retry up to 5 times (6 total attempts)
     retry_delay=10,       # wait 10 seconds between retries
     retry_backoff=True,   # exponential backoff
@@ -31,7 +31,7 @@ async def call_payment_api(invoice_id: str):
 Same wait between every retry:
 
 ```python
-@app.job(max_retries=5, retry_delay=10)
+@soniq.job(max_retries=5, retry_delay=10)
 async def sync_inventory(product_id: str):
     ...
 ```
@@ -43,7 +43,7 @@ Retries at: 10s, 10s, 10s, 10s, 10s.
 Provide a list to set exact delays for each retry:
 
 ```python
-@app.job(max_retries=3, retry_delay=[1, 5, 30])
+@soniq.job(max_retries=3, retry_delay=[1, 5, 30])
 async def send_verification_email(user_id: int):
     ...
 ```
@@ -55,7 +55,7 @@ Retries at: 1s, 5s, 30s. If there are more retries than list entries, the last v
 Set `retry_backoff=True` to double the delay on each attempt:
 
 ```python
-@app.job(max_retries=5, retry_delay=10, retry_backoff=True)
+@soniq.job(max_retries=5, retry_delay=10, retry_backoff=True)
 async def call_payment_api(invoice_id: str):
     ...
 ```
@@ -69,7 +69,7 @@ If `retry_delay` is `0`, a base of 1 second is used: 1s, 2s, 4s, 8s, 16s.
 Prevent delays from growing unbounded:
 
 ```python
-@app.job(max_retries=8, retry_delay=5, retry_backoff=True, retry_max_delay=300)
+@soniq.job(max_retries=8, retry_delay=5, retry_backoff=True, retry_max_delay=300)
 async def fetch_external_report(report_id: str):
     ...
 ```
@@ -89,7 +89,7 @@ Dead-letter jobs do not run on their own. You inspect them, fix the underlying p
 External APIs may rate-limit or have intermittent outages. Exponential backoff gives them time to recover.
 
 ```python
-@app.job(max_retries=5, retry_delay=2, retry_backoff=True, retry_max_delay=120)
+@soniq.job(max_retries=5, retry_delay=2, retry_backoff=True, retry_max_delay=120)
 async def sync_user_to_crm(user_id: int):
     user = await get_user(user_id)
     async with httpx.AsyncClient() as client:
@@ -102,7 +102,7 @@ async def sync_user_to_crm(user_id: int):
 Email servers sometimes reject connections temporarily. A short fixed delay usually works.
 
 ```python
-@app.job(max_retries=3, retry_delay=5)
+@soniq.job(max_retries=3, retry_delay=5)
 async def send_order_confirmation(order_id: str):
     order = await get_order(order_id)
     await smtp_send(to=order.email, subject=f"Order {order_id} confirmed", body=...)
@@ -113,7 +113,7 @@ async def send_order_confirmation(order_id: str):
 File imports may fail due to locks or temporary storage issues. Escalate the delay to avoid hammering the system.
 
 ```python
-@app.job(max_retries=3, retry_delay=[5, 30, 120])
+@soniq.job(max_retries=3, retry_delay=[5, 30, 120])
 async def import_csv(file_path: str):
     async with aiofiles.open(file_path) as f:
         rows = await parse_csv(f)
@@ -137,11 +137,11 @@ The pattern is "make the second run a no-op", not "guarantee the second run neve
 Every job has a default execution timeout of 300 seconds (5 minutes). If a job exceeds its timeout, it is treated as a failure and follows normal retry logic.
 
 ```python
-@app.job(max_retries=3, timeout=60)
+@soniq.job(max_retries=3, timeout=60)
 async def quick_health_check(service_url: str):
     ...
 
-@app.job(timeout=None)  # no timeout
+@soniq.job(timeout=None)  # no timeout
 async def long_running_migration():
     ...
 ```

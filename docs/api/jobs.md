@@ -3,18 +3,18 @@
 Everything about defining, enqueueing, scheduling, and inspecting jobs.
 
 
-## @app.job decorator
+## @soniq.job decorator
 
 Registers a function as a job. Always called with parentheses, even with no kwargs.
 
 ```python
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@app.job()
+@soniq.job()
 async def send_email(to: str, subject: str, body: str):
     ...
 
-@app.job(retries=5, queue="urgent")
+@soniq.job(retries=5, queue="urgent")
 async def send_password_reset(to: str, token: str):
     ...
 ```
@@ -37,7 +37,7 @@ All parameters are optional.
 | `validate` | `type[BaseModel] \| None` | `None` | Pydantic model for argument validation at enqueue time. Alias: `args_model`. |
 
 ```python
-@app.job(
+@soniq.job(
     retries=5,
     priority=10,
     queue="urgent",
@@ -55,16 +55,16 @@ Dispatches a registered job for processing. Three input shapes:
 
 ```python
 # 1. Callable (single-repo)
-job_id = await app.enqueue(send_email, to="a@b.com", subject="Hi", body="Hello")
+job_id = await soniq.enqueue(send_email, to="a@b.com", subject="Hi", body="Hello")
 
 # 2. String task name (cross-service / by-name)
-job_id = await app.enqueue(
+job_id = await soniq.enqueue(
     "users.send_email",
     args={"to": "a@b.com", "subject": "Hi", "body": "Hello"},
 )
 
 # 3. TaskRef (typed cross-repo stub)
-job_id = await app.enqueue(send_email_ref, args={"to": "a@b.com", "subject": "Hi", "body": "Hello"})
+job_id = await soniq.enqueue(send_email_ref, args={"to": "a@b.com", "subject": "Hi", "body": "Hello"})
 ```
 
 ### Signature
@@ -90,7 +90,7 @@ async def enqueue(
 - **String task name**: function args travel in `args=dict`. Don't pass `**func_kwargs` (they would collide with enqueue options).
 - **`TaskRef`**: function args travel in `args=dict` and are validated against `ref.args_model` if set.
 
-All option parameters are optional. When omitted, the values from the `@app.job` registration apply (or system defaults if no local registration).
+All option parameters are optional. When omitted, the values from the `@soniq.job` registration apply (or system defaults if no local registration).
 
 ### Transactional enqueue
 
@@ -98,14 +98,69 @@ Pass a `connection` to enqueue a job inside an existing database transaction.
 If the transaction rolls back, the job is never created.
 
 ```python
-await app.ensure_initialized()
-async with app.backend.acquire() as conn:
+await soniq.ensure_initialized()
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders (id) VALUES ($1)", order_id)
-        await app.enqueue(fulfill_order, connection=conn, order_id=order_id)
+        await soniq.enqueue(fulfill_order, connection=conn, order_id=order_id)
 ```
 
 Transactional enqueue requires the PostgreSQL backend.
+
+
+## job.enqueue() and job.options()
+
+The decorator adds two methods to the job function: `.enqueue()` and `.options()`. Use them to enqueue a job without passing the function to `soniq.enqueue()`.
+
+```python
+soniq = Soniq(database_url="postgresql://localhost/myapp")
+
+@soniq.job()
+async def send_welcome(to: str) -> None:
+    ...
+
+# Enqueue with the job's own arguments.
+job_id = await send_welcome.enqueue(to="dev@example.com")
+
+# Set enqueue options, then enqueue.
+job_id = await send_welcome.options(queue="emails", priority=10).enqueue(
+    to="dev@example.com"
+)
+
+# The function is still a plain async function.
+await send_welcome(to="dev@example.com")
+```
+
+`send_welcome.enqueue(**kwargs)` does the same thing as `soniq.enqueue(send_welcome, **kwargs)`. It uses the `Soniq` instance that registered the job, and the same task name, also when you set `name=` on the decorator.
+
+`.options()` accepts the enqueue options of `enqueue()`: `queue`, `priority`, `scheduled_at`, `unique`, `dedup_key` and `connection`. It returns an object with one method, `.enqueue(**kwargs)`. You can keep this object and use it more than one time.
+
+```python
+async with soniq.backend.acquire() as conn:
+    async with conn.transaction():
+        await conn.execute("INSERT INTO users (email) VALUES ($1)", email)
+        await send_welcome.options(connection=conn).enqueue(to=email)
+```
+
+Use `.options()` when the job has an argument with the same name as an enqueue option, for example `queue`. In `send_welcome.enqueue(queue="x")`, `queue` is the enqueue option, not the job argument. This is the same rule as for `soniq.enqueue()`.
+
+### Type checking
+
+A type checker such as mypy or pyright checks the arguments of `.enqueue()` against the job signature. A wrong argument name or type is an error before the code runs:
+
+```python
+await send_welcome.enqueue(too="dev@example.com")  # error: unexpected keyword "too"
+```
+
+The static return type of `@soniq.job()` is `soniq.types.JobFunction[P, R]`. It is a typing aid only. At runtime the decorator returns the same plain function as before, with the extra attributes. A `JobFunction` is still a `Callable[P, Awaitable[R]]`, so code that wraps or calls the job type-checks without changes.
+
+Pass job arguments as keywords. A positional argument to `.enqueue()` raises `TypeError`. A type checker does not report it.
+
+### Compatibility
+
+`soniq.enqueue(send_welcome, ...)` stays supported. It is not deprecated, and there is no plan to remove it. Both forms write the same job row. Use the form that you prefer.
+
+If your function already has an attribute named `enqueue` or `options`, Soniq does not replace it. Soniq writes a debug log message and does not add that method.
 
 
 ## enqueue_many()
@@ -113,7 +168,7 @@ Transactional enqueue requires the PostgreSQL backend.
 Bulk-enqueue many jobs that share the same target. Returns a list of job IDs in input order.
 
 ```python
-ids = await app.enqueue_many(
+ids = await soniq.enqueue_many(
     send_email,
     [
         {"to": "a@example.com", "subject": "Hi", "body": "Hello"},
@@ -151,7 +206,7 @@ Schedule a job for future execution.
 from datetime import datetime, timezone
 
 # Absolute UTC datetime
-await app.schedule(
+await soniq.schedule(
     send_report,
     run_at=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
     user_id=42,
@@ -168,31 +223,33 @@ async def schedule(
 ) -> str  # Returns job UUID
 ```
 
-`app.schedule()` is a thin wrapper around `app.enqueue()` that sets `scheduled_at=run_at`.
+`soniq.schedule()` is a thin wrapper around `soniq.enqueue()` that sets `scheduled_at=run_at`.
 
 
-## @app.periodic()
+## @soniq.periodic()
 
 Declares a job that runs on a recurring schedule. Single decorator: registers the
-function as a regular `@app.job` and stamps the schedule on it. The scheduler
+function as a regular `@soniq.job` and stamps the schedule on it. The scheduler
 process (`soniq scheduler`) picks up all `@periodic` functions automatically.
 
 ```python
 from datetime import timedelta
 from soniq import cron, daily, every
 
-@app.periodic(cron=daily().at("09:00"), name="reports.daily")
+@soniq.periodic(cron=daily().at("09:00"), name="reports.daily")
 async def daily_report():
     ...
 
-@app.periodic(cron=every(10).minutes(), queue="maintenance", name="cleanup")
+@soniq.periodic(cron=every(10).minutes(), queue="maintenance", name="cleanup")
 async def cleanup_old_sessions():
     ...
 
-@app.periodic(every=timedelta(seconds=30), name="metrics.flush")
+@soniq.periodic(every=timedelta(seconds=30), name="metrics.flush")
 async def flush_metrics():
     ...
 ```
+
+The scheduler checks for due jobs every `--check-interval` seconds (default 60). An `every=` interval shorter than that rounds up to it, so the 30-second job above fires about once a minute unless you run `soniq scheduler --check-interval 30` or lower. The first run comes about one check interval after the scheduler starts.
 
 ### Parameters
 
@@ -200,7 +257,7 @@ async def flush_metrics():
 |---|---|---|
 | `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). |
 | `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; ints are treated as seconds. |
-| `**job_kwargs` | | Any parameter accepted by `@app.job` (`name`, `queue`, `priority`, `retries`, etc.). `name` is optional and falls back to `f"{module}.{qualname}"`. |
+| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). `name` is optional and falls back to `f"{module}.{qualname}"`. |
 
 Rules:
 - Specify exactly one of `cron=` or `every=`.
@@ -217,7 +274,7 @@ type annotation `JobContext` and Soniq fills it in automatically.
 ```python
 from soniq import JobContext
 
-@app.job()
+@soniq.job()
 async def process_order(order_id: int, ctx: JobContext):
     print(f"Job {ctx.job_id}, attempt {ctx.attempt} of {ctx.max_attempts}")
 ```
@@ -258,13 +315,13 @@ table; they do not remain in `soniq_jobs`. See
 [Dead-letter queue](../reference/dead-letter.md).
 
 
-## Imperative scheduling: `app.scheduler`
+## Imperative scheduling: `soniq.scheduler`
 
 For schedules computed at runtime (per-tenant, per-flag, ...) use the
 `Scheduler` service exposed on the Soniq instance:
 
 ```python
-await app.scheduler.add(
+await soniq.scheduler.add(
     target=cleanup,        # callable, task-name string, or pass name=
     cron="0 9 * * *",      # OR: every=timedelta(...)
     args={"region": "US"},
@@ -272,11 +329,11 @@ await app.scheduler.add(
     priority=10,
 )
 
-await app.scheduler.pause("reports.daily")
-await app.scheduler.resume("reports.daily")
-await app.scheduler.remove("reports.daily")
-schedules = await app.scheduler.list(status="active")
-sched = await app.scheduler.get("reports.daily")
+await soniq.scheduler.pause("reports.daily")
+await soniq.scheduler.resume("reports.daily")
+await soniq.scheduler.remove("reports.daily")
+schedules = await soniq.scheduler.list(status="active")
+sched = await soniq.scheduler.get("reports.daily")
 ```
 
 Schedules are keyed by the resolved task name. Re-adding the same name
@@ -301,4 +358,4 @@ cron("*/15 * * * *")               # identity passthrough
 ```
 
 Each terminal returns a `str`, so `cron=daily().at("09:00")` plugs straight
-into `@app.periodic(cron=...)` or `app.scheduler.add(cron=...)`.
+into `@soniq.periodic(cron=...)` or `soniq.scheduler.add(cron=...)`.

@@ -12,24 +12,37 @@ You will need a running PostgreSQL. If you do not have one handy, `docker run -p
 
 > Just want to try Soniq without Postgres? `pip install soniq[sqlite]`, then pass a bare file path instead of a URL: `Soniq(database_url="dev.db")`. SQLite and the in-memory backend (`Soniq(backend="memory")`) are for local dev and tests only - see the [testing guide](guides/testing.md#sqlite-for-integration-tests) and the [Backend](reference/glossary.md#backend) glossary entry.
 
-## 2. Define a job
+## 2. Set the environment
+
+The `soniq` command and your Python code both read the database URL from the environment. Set it once in your shell:
+
+```bash
+export SONIQ_DATABASE_URL="postgresql://localhost/myapp"
+export SONIQ_JOBS_MODULES=jobs
+```
+
+`SONIQ_JOBS_MODULES` tells the worker which Python modules to import on startup, so the `@soniq.job()` decorators run and register the functions. Without it, the worker does not know which jobs exist.
+
+## 3. Define a job
 
 ```python
 # jobs.py
 import asyncio
 from soniq import Soniq
 
-app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq()
 
-@app.job()
+@soniq.job(name="send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(app.enqueue(send_welcome, to="dev@example.com"))
+    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
 ```
 
-## 3. Set up the database
+The job has an explicit `name`. When you run `python jobs.py`, Python calls the file `__main__`. Without a fixed name, the job would be stored as `__main__.send_welcome`, and the worker (which imports the file as `jobs`) could not find it.
+
+## 4. Set up the database
 
 ```bash
 soniq setup
@@ -37,17 +50,15 @@ soniq setup
 
 Creates the tables Soniq needs. The command is idempotent (safe to run more than once - re-running it does not break anything).
 
-## 4. Start a worker
+## 5. Start a worker
 
 ```bash
-SONIQ_DATABASE_URL="postgresql://localhost/myapp" \
-SONIQ_JOBS_MODULES="jobs" \
 soniq worker --concurrency 4
 ```
 
-`SONIQ_JOBS_MODULES` tells the worker which Python modules to import on startup, so the `@app.job` decorators have a chance to run and register the functions. Without it, the worker has no idea which jobs exist. The worker process also needs to be able to actually import your job code - see [Job module discovery](getting-started/installation.md#job-module-discovery) for cross-service setups and per-worker overrides.
+The worker process must be able to import your job code. See [Job module discovery](getting-started/installation.md#job-module-discovery) for cross-service setups and per-worker overrides.
 
-## 5. Enqueue a job
+## 6. Enqueue a job
 
 In another terminal:
 
@@ -67,7 +78,7 @@ The code above works, but you will want to tighten a few things before deploying
 - **Set `SONIQ_JOBS_MODULES`** so workers can import your job functions on startup.
 - **Run `soniq setup` only once per deploy**, not from every replica's startup. See [going to production](production/going-to-production.md).
 - **Make handlers idempotent** - meaning safe to run more than once with the same end result. Soniq guarantees *at-least-once* delivery: if a worker crashes after running your function but before marking the job done, the job will run again on another worker. This is normal for every job queue. The fix is to design your handler so a re-run is harmless: use database upserts (`INSERT ... ON CONFLICT DO UPDATE`) instead of plain inserts, check whether you already sent the email before sending it again, or store an idempotency token alongside the side effect.
-- **Tune timeouts.** Every job has a default 300-second timeout. Override per-job with `@app.job(timeout=600)`.
+- **Tune timeouts.** Every job has a default 300-second timeout. Override per-job with `@soniq.job(timeout=600)`.
 
 ## Where to go next
 

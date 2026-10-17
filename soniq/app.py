@@ -60,9 +60,11 @@ from .utils.producer_id import resolve_producer_id
 from .utils.rate_limit import default_warner
 
 if TYPE_CHECKING:
-    from .types import QueueStats
+    from .types import JobFunction, QueueStats
 
 _P = ParamSpec("_P")
+_JP = ParamSpec("_JP")
+_JR = TypeVar("_JR")
 
 logger = logging.getLogger(__name__)
 
@@ -339,10 +341,13 @@ class Soniq:
         await self._ensure_initialized()
         await self._backend.reset()  # type: ignore[union-attr]
 
-    def job(self, **kwargs: Any) -> Any:
-        """Register a job. Use as ``@app.job(...)``; the bare ``@app.job`` form is not supported."""
-        _JP = ParamSpec("_JP")
-        _JR = TypeVar("_JR")
+    def job(
+        self, **kwargs: Any
+    ) -> Callable[[Callable[_JP, Awaitable[_JR]]], "JobFunction[_JP, _JR]"]:
+        """Register a job. Use as ``@app.job(...)``; the bare ``@app.job`` form is not supported.
+
+        Returns the same function, with ``.enqueue(...)`` and ``.options(...)`` added.
+        """
 
         # Pass per-instance route_map and task_name_pattern so validation is scoped
         # to this Soniq instance, not a global cache.
@@ -351,13 +356,16 @@ class Soniq:
 
         def decorator(
             func: Callable[_JP, Awaitable[_JR]],
-        ) -> Callable[_JP, Awaitable[_JR]]:
-            return self._job_registry.register_job(
+        ) -> "JobFunction[_JP, _JR]":
+            wrapper = self._job_registry.register_job(
                 func,
                 _route_map=route_map,
                 _task_name_pattern=task_name_pattern,
+                _soniq=self,
                 **kwargs,
             )
+            # Typing only: the runtime object is the plain wrapper function.
+            return wrapper  # type: ignore[return-value]
 
         return decorator
 
@@ -669,6 +677,16 @@ class Soniq:
 
         if connection is not None:
             if isinstance(self._backend, PostgresBackend):
+                # A raw asyncpg connection is used as-is. An SQLAlchemy
+                # AsyncSession / AsyncConnection is unwrapped to its asyncpg
+                # connection. The module check avoids importing SQLAlchemy.
+                if (
+                    not isinstance(connection, asyncpg.Connection)
+                    and type(connection).__module__.split(".", 1)[0] == "sqlalchemy"
+                ):
+                    from .integrations.sqlalchemy import to_asyncpg_connection
+
+                    connection = await to_asyncpg_connection(connection)
                 txn_id = await self._backend.create_job_transactional(
                     connection=connection,
                     job_id=job_id,
@@ -913,7 +931,13 @@ class Soniq:
         concurrency: int = 4,
         run_once: bool = False,
         queues: Optional[List[str]] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> Any:
+        """Run a worker in this process.
+
+        Pass ``shutdown_event`` to control shutdown yourself: setting it drains
+        in-flight jobs, and no signal handlers are installed.
+        """
         await self._ensure_initialized()
         assert self._backend is not None  # narrowed after _ensure_initialized
 
@@ -939,6 +963,7 @@ class Soniq:
             concurrency=concurrency,
             run_once=run_once,
             queues=queues,
+            shutdown_event=shutdown_event,
         )
 
     def _maybe_warn_periodic_without_scheduler(self) -> None:

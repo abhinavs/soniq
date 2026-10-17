@@ -13,6 +13,7 @@ import time
 from typing import Any, Dict, List
 
 import pytest
+import pytest_asyncio
 
 from soniq import Soniq
 from tests.db_utils import (
@@ -26,7 +27,7 @@ captured_notifications: List[Dict[str, Any]] = []
 processed_jobs: List[Dict[str, Any]] = []
 
 
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def test_db():
     """Set up test database for all tests"""
     await create_test_database()

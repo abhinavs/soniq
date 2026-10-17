@@ -15,6 +15,21 @@ A background job lets you say "do this later, in another process" and return imm
 
 Background jobs are how every non-trivial web app handles slow side effects: emails, webhooks, file processing, report generation, syncing data to third-party systems, anything that should not block a request.
 
+## Why not FastAPI's BackgroundTasks?
+
+If you use FastAPI, you already have `BackgroundTasks`, and for a lot of apps it is where background work starts. You add `background_tasks.add_task(send_welcome, user.id)` to a route, and the function runs right after the response goes out. No extra setup.
+
+The catch is that the task lives in the memory of the web process. It is not written anywhere. So:
+
+- **A deploy or a crash drops it.** If Uvicorn restarts while ten welcome emails wait to run, those ten emails never go out, and nothing records that they were missed.
+- **A failure is final.** If the email provider times out, the task raises, the error goes to your logs, and that is the end of it. No retry.
+- **You can't see it.** There is no list of pending tasks and no history of failed ones. "Did the invoice for order 4711 go out?" has no answer short of searching the logs.
+- **It runs on your web process.** An async task shares the event loop that serves your requests, and a sync one takes a thread from the same pool your sync routes use. You can't move the work to another machine.
+
+`BackgroundTasks` is fine for work you don't mind losing, like a cache warm-up or an analytics ping. For anything a user would notice if it went missing, you want the task written down before the request returns.
+
+That is the change Soniq makes. `await soniq.enqueue(send_welcome, user_id=user.id)` writes a row to Postgres. The job survives a restart, retries on failure, shows up in the dashboard and in the dead-letter queue if it keeps failing, and it can run in the same process (with the FastAPI lifespan helper) or in a separate worker. The route code barely changes. The [FastAPI guide](guides/fastapi.md#coming-from-backgroundtasks) has the before-and-after diff.
+
 ## Why Postgres instead of Redis?
 
 Most Python job queues - Celery, RQ, Arq, Dramatiq - default to Redis as the broker. Redis is fast and battle-tested, but it is also a separate service you have to run, and that has costs.
@@ -28,10 +43,10 @@ Most Python job queues - Celery, RQ, Arq, Dramatiq - default to Redis as the bro
 Soniq sidesteps all of this by storing jobs as rows in the same Postgres database your app already uses. The jobs and the data are backed up together, monitored together, and - the part that matters most - transacted together.
 
 ```python
-async with app.backend.acquire() as conn:
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders (id, total) VALUES ($1, $2)", order_id, total)
-        await app.enqueue(send_invoice, connection=conn, order_id=order_id)
+        await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
         # Both writes commit together, or neither does.
 ```
 
@@ -74,7 +89,7 @@ The home page lists these too. They belong on this page as well, because the rea
 
 You will likely have a good time with Soniq if:
 
-- You are building a Python web app (FastAPI, Django, Flask, Litestar, anything else).
+- You are building a FastAPI app or another asyncio Python app.
 - You are using PostgreSQL.
 - You want background jobs but you do not want another service to run.
 - Your throughput is "thousands of jobs per minute" or less, not "tens of thousands per second".

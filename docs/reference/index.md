@@ -5,7 +5,7 @@
 ## Python API
 
 - [Soniq](../api/soniq.md) - the application object
-- [Jobs](../api/jobs.md) - the `@app.job` decorator and `enqueue` surface
+- [Jobs](../api/jobs.md) - the `@soniq.job` decorator and `enqueue` surface
 - [Worker](../api/worker.md) - `run_worker` and worker configuration
 - [Hooks](../api/hooks.md) - `before_job`, `after_job`, `on_error`
 

@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in Soniq is not working as documented
+labels: [bug]
+body:
+  - type: input
+    id: soniq-version
+    attributes:
+      label: Soniq version
+      description: Output of `pip show soniq`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+  - type: input
+    id: postgres-version
+    attributes:
+      label: PostgreSQL version
+      placeholder: "16"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - PostgreSQL
+        - SQLite
+        - In-memory
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal job definition, the enqueue call and the worker command help the most.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or traceback
+      render: text

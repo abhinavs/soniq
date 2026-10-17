@@ -57,10 +57,10 @@ from fastapi import FastAPI
 from soniq import Soniq
 from soniq.dashboard import create_dashboard_app
 
-soniq_app = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 app = FastAPI()
-app.mount("/admin/queue", create_dashboard_app(soniq_app))
+app.mount("/admin/queue", create_dashboard_app(soniq))
 ```
 
 The dashboard is then accessible at `http://localhost:8000/admin/queue`. This is

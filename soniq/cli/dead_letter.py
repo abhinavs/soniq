@@ -9,7 +9,7 @@ from soniq.discovery import discover_and_import_modules
 from soniq.features.dead_letter import DeadLetterFilter
 
 from ._context import cli_app, execution_app
-from ._helpers import database_url_argument, resolve_jobs_modules
+from ._helpers import app_argument, database_url_argument, resolve_jobs_modules
 
 # Bulk replay/delete prompts above this threshold unless --yes is passed.
 # Below it, single-digit operations are treated as deliberate and run silently.
@@ -69,6 +69,7 @@ def add_dead_letter_cmd(subparsers) -> None:
         ),
     )
     database_url_argument(parser)
+    app_argument(parser)
     parser.set_defaults(func=handle_dead_letter)
 
 
@@ -101,8 +102,8 @@ async def handle_dead_letter(args) -> int:
         if not modules:
             print(
                 "Error: 'replay' needs your job modules loaded to know the "
-                "target job's retry limits. Set SONIQ_JOBS_MODULES or pass "
-                "--jobs-modules.",
+                "target job's retry limits. Pass --app myapp.jobs:soniq, "
+                "set SONIQ_JOBS_MODULES or pass --jobs-modules.",
                 file=sys.stderr,
             )
             return 1

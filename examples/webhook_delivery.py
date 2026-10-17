@@ -12,21 +12,21 @@ from soniq.features.webhooks import WebhookEvent
 
 
 async def main() -> None:
-    app = Soniq(
+    soniq = Soniq(
         database_url=os.environ.get(
             "SONIQ_DATABASE_URL", "postgresql://localhost/myapp"
         )
     )
-    await app.setup()
+    await soniq.setup()
 
-    await app.webhooks.start()
+    await soniq.webhooks.start()
     try:
-        await app.webhooks.register(
+        await soniq.webhooks.register(
             url="http://localhost:8080/webhook",
             events=[WebhookEvent.JOB_COMPLETED.value],
         )
 
-        await app.webhooks.send_webhook(
+        await soniq.webhooks.send_webhook(
             WebhookEvent.JOB_COMPLETED,
             data={
                 "job_id": "job-123",
@@ -36,8 +36,8 @@ async def main() -> None:
             },
         )
     finally:
-        await app.webhooks.stop()
-        await app.close()
+        await soniq.webhooks.stop()
+        await soniq.close()
 
 
 if __name__ == "__main__":

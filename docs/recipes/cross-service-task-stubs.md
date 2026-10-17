@@ -95,7 +95,7 @@ The producer:
   validates `args` against `InvoiceArgs` before writing the row.
   If a producer typo passes `order_id=123` (int), the call raises
   `SoniqError(SONIQ_TASK_ARGS_INVALID)` immediately.
-- Never calls `@app.job` or `run_worker`. Producer-vs-consumer is a
+- Never calls `@soniq.job` or `run_worker`. Producer-vs-consumer is a
   deployment convention; see [Deployment shapes](../production/deployment-shapes.md).
 
 ## The consumer
@@ -131,7 +131,7 @@ The consumer:
 
 - **No implementation crosses the wire.** The stub package contains
   schemas and names. The producer never imports the consumer's
-  handler module; the consumer never imports the producer's app.
+  handler module; the consumer never imports the producer's soniq.
 - **Typed at the call site.** The producer's IDE knows
   `args=InvoiceArgs(...)` is what `send_invoice` expects, because the
   TaskRef carries `args_model=InvoiceArgs`.

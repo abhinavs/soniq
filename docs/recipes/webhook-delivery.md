@@ -12,10 +12,10 @@ import aiohttp
 from soniq import Soniq
 from soniq.job import JobContext
 
-eq = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@eq.job(queue="webhooks", max_retries=5, retry_delay=[1, 5, 30, 120, 600])
+@soniq.job(queue="webhooks", max_retries=5, retry_delay=[1, 5, 30, 120, 600])
 async def deliver_webhook(
     url: str,
     event: str,
@@ -81,7 +81,7 @@ async def notify_subscribers(event: str, data: dict):
     event_id_base = str(uuid.uuid4())
 
     for sub in subscribers:
-        await eq.enqueue(
+        await soniq.enqueue(
             deliver_webhook,
             url=sub.url,
             event=event,
@@ -150,11 +150,11 @@ Include these headers with every delivery so receivers can route, verify, and de
 For critical events, enqueue the webhook inside the same transaction as the business data:
 
 ```python
-await eq.ensure_initialized()
-async with eq.backend.acquire() as conn:
+await soniq.ensure_initialized()
+async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         order_id = await conn.fetchval("INSERT INTO orders (...) RETURNING id", ...)
-        await eq.enqueue(
+        await soniq.enqueue(
             deliver_webhook,
             connection=conn,
             url=subscriber.url,

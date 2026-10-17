@@ -14,15 +14,21 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 from contextlib import redirect_stderr
 from types import SimpleNamespace
+
+import pytest
 
 from tests.db_utils import TEST_DATABASE_URL
 
 os.environ.setdefault("SONIQ_DATABASE_URL", TEST_DATABASE_URL)
 
 from soniq.cli.main import build_parser  # noqa: E402
-from soniq.cli.tasks import handle_tasks_check  # noqa: E402
+from soniq.cli.tasks import (  # noqa: E402
+    _load_task_refs_from_package,
+    handle_tasks_check,
+)
 
 
 def test_tasks_check_help_text_mentions_shared_registry():
@@ -55,6 +61,27 @@ def test_tasks_check_without_package_arg_errors(monkeypatch):
     assert rc == 2
     msg = err.getvalue().lower()
     assert "package" in msg or "stub" in msg
+
+
+def test_tasks_check_imports_dotted_module_from_cwd(tmp_path, monkeypatch):
+    """``tasks-check stubs_mod`` must find a module in the current
+    folder, like ``worker`` and ``setup`` do."""
+    (tmp_path / "cwd_stubs_mod.py").write_text(
+        "from soniq import task_ref\n" "send = task_ref(name='billing.send_invoice')\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p not in ("", ".")])
+    monkeypatch.delitem(sys.modules, "cwd_stubs_mod", raising=False)
+    refs = _load_task_refs_from_package("cwd_stubs_mod")
+    assert [r["name"] for r in refs] == ["billing.send_invoice"]
+
+
+def test_version_flag_prints_package_version(capsys):
+    from soniq import __version__
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--version"])
+    assert capsys.readouterr().out.strip() == f"soniq {__version__}"
 
 
 def _subcommand_help(parser, name: str) -> str:

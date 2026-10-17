@@ -4,15 +4,15 @@ One-paragraph definitions for the words Soniq's docs use.
 
 ## Job
 
-A unit of work. Either the function you decorate with `@app.job` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
+A unit of work. Either the function you decorate with `@soniq.job` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
 
 ## Handler
 
-The Python function that runs when a job is processed. Registered via `@app.job`.
+The Python function that runs when a job is processed. Registered via `@soniq.job`.
 
 ## Task name
 
-The string identifier under which a handler is registered. By default Soniq derives it from `f"{module}.{qualname}"` (Celery-style). Override with `@app.job(name="...")`. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
+The string identifier under which a handler is registered. By default Soniq derives it from `f"{module}.{qualname}"` (Celery-style). Override with `@soniq.job(name="...")`. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
 
 ## TaskRef
 
@@ -24,7 +24,7 @@ A long-running process that polls (or receives `NOTIFY` for) jobs, claims them v
 
 ## Scheduler
 
-A separate long-running process (`soniq scheduler`) that evaluates `@app.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The CLI worker does not evaluate recurring jobs - that is intentional, so worker scaling does not duplicate scheduler work. Multiple scheduler instances coordinate via a Postgres advisory lock; only one does work at a time.
+A separate long-running process (`soniq scheduler`) that evaluates `@soniq.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The CLI worker does not evaluate recurring jobs - that is intentional, so worker scaling does not duplicate scheduler work. Multiple scheduler instances coordinate via a Postgres advisory lock; only one does work at a time.
 
 ## Queue
 
@@ -40,7 +40,7 @@ Periodic write each worker performs to `soniq_workers` to advertise liveness. If
 
 ## Dead-letter queue (DLQ)
 
-The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `app.dead_letter.list_dead_letter_jobs()`, `app.dead_letter.replay(dead_letter_id)`, or the `soniq dead-letter` CLI to inspect and recover them. See the [dead-letter Python API](../api/dead-letter.md).
+The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `soniq.dead_letter.list_dead_letter_jobs()`, `soniq.dead_letter.replay(dead_letter_id)`, or the `soniq dead-letter` CLI to inspect and recover them. See the [dead-letter Python API](../api/dead-letter.md).
 
 ## Replay
 

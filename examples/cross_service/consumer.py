@@ -9,7 +9,7 @@ In production you start the worker via the CLI:
     soniq worker
 
 This script can also be run directly as a quick smoke check; the
-in-process `app.run_worker()` call at the bottom is the embedded /
+in-process `consumer.run_worker()` call at the bottom is the embedded /
 test-time entry point, not the recommended deploy path.
 """
 

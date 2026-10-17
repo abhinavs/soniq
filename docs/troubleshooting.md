@@ -75,11 +75,11 @@ This is expected. Multiple `soniq scheduler` processes can run for redundancy --
 
 **Fix:** use a `postgresql://...` URL, or remove `connection=conn` for non-Postgres environments.
 
-### SQLAlchemy connection extraction fails with `AttributeError`
+### `SONIQ_UNSUPPORTED_CONNECTION` when passing a SQLAlchemy session
 
-**Likely cause:** you're using the `psycopg3` async driver instead of `asyncpg`. The attribute chain `raw_conn.sync_connection.connection.driver_connection` only works with asyncpg.
+**Likely cause:** the engine uses a driver other than asyncpg or psycopg 3, for example `aiosqlite`.
 
-**Fix:** switch the engine URL to `postgresql+asyncpg://...`. See the [SQLAlchemy section](guides/transactional-enqueue.md#pattern-3-sqlalchemy-async) of the transactional enqueue guide.
+**Fix:** use a `postgresql+asyncpg://...` or `postgresql+psycopg://...` engine URL, and pass the session as `connection=`. You do not need to dig out the raw driver connection. See [Pattern 1](guides/transactional-enqueue.md#pattern-1-pass-your-sqlalchemy-session) of the transactional enqueue guide.
 
 ### `Task '...' is not registered locally` at enqueue time
 

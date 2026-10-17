@@ -4,6 +4,40 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0]
+
+### Upgrading from 0.0.5
+
+No code, config or schema change is needed. `soniq setup` has nothing to apply. All 0.0.5 APIs, CLI commands, flags and env vars work as before.
+
+### Deprecations
+
+None in this release.
+
+### Added
+
+- **`enqueue(connection=...)` accepts an SQLAlchemy `AsyncSession` or `AsyncConnection`.** The job is written in the same transaction as your ORM writes. If SQLAlchemy rolls back, the job is gone too. Works with the `asyncpg` and `psycopg` drivers. Install with `pip install "soniq[sqlalchemy]"`.
+- **FastAPI lifespan helper.** `from soniq.integrations.fastapi import lifespan`, then `FastAPI(lifespan=lifespan(soniq, run_worker=True))`. It initializes Soniq, can run a worker in the same process, stops it gracefully on shutdown, and closes Soniq. `extra=` chains your own lifespan.
+- **`soniq worker myapp.jobs:soniq`.** `worker`, `setup` and `scheduler` accept an optional `module:attribute` argument that points at your `Soniq` instance. `worker`, `setup`, `scheduler`, `status`, `inspect`, `dashboard` and `dead-letter` accept `--app module:attribute`. With an app path, the database URL comes from `--database-url`, then `SONIQ_DATABASE_URL`, then the instance. Without one, nothing changes.
+- **`.enqueue()` and `.options()` on job functions.** `await send_welcome.enqueue(to="dev@example.com")` does the same as `await soniq.enqueue(send_welcome, to="dev@example.com")`, and a type checker checks the arguments against the job signature. `send_welcome.options(queue="emails", priority=1).enqueue(...)` sets enqueue options. The decorator still returns the same plain function. `soniq.enqueue(fn, ...)` stays supported and is not deprecated.
+- **`soniq.types.JobFunction` and `soniq.types.JobOptions`** protocols.
+- **psycopg 3 for transactional enqueue.** `enqueue(connection=...)` accepts a `psycopg.AsyncConnection`. New `psycopg` extra. `soniq.integrations.sqlalchemy.to_driver_connection` returns either driver connection; `to_asyncpg_connection` stays as an alias.
+- **`Soniq.run_worker(..., shutdown_event=None)`.** Pass an `asyncio.Event` to control shutdown yourself. Setting it drains in-flight jobs. When given, the worker installs no signal handlers.
+- **Opt-in pytest plugin** `soniq.testing.pytest_plugin` with the `soniq_memory` and `soniq_pg` fixtures and the `soniq(app="module:attr")` marker. Enable it with `pytest_plugins = ["soniq.testing.pytest_plugin"]`. There is no `pytest11` entry point, so nothing loads unless you ask.
+- **`soniq.testing.drain(soniq, max_jobs=None)`** runs queued jobs in the test's event loop and returns their results.
+- **`soniq migrations export --alembic|--sql`** prints the core migrations as an Alembic revision or as raw SQL. See the new "Migrations with Alembic" page.
+- **`soniq._deprecation`** with `warn_deprecated()`, `deprecated_param()` and `SoniqDeprecationWarning`. `SONIQ_DEPRECATIONS=error|ignore` controls them. Nothing is deprecated yet.
+- **Docs:** "Compare tools", "Benchmarks", "Stability and versioning", "Deprecations" and "Migrations with Alembic" pages. A throughput benchmark script in `bench/`.
+- **Examples:** `examples/fastapi_demo/` (FastAPI, SQLAlchemy and Soniq with Docker Compose) and `examples/backgroundtasks_vs_soniq/` (what happens to queued work across a restart).
+
+### Changed
+
+- `Soniq.job()` now has a precise return type instead of `Any`. Type checkers now check direct calls to decorated jobs against the function signature. There is no runtime change.
+
+### Fixed
+
+- `enqueue(connection=conn)` no longer fails with `DataError: expected str, got dict` when `conn` comes from your own asyncpg pool or `asyncpg.connect()`. Soniq no longer needs its JSONB codec on the connection. Stored data is unchanged.
+
 ## [0.0.5]
 
 ### Added

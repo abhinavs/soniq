@@ -131,7 +131,7 @@ Every arrow is a single SQL statement. There is no other state. That's the whole
 
 ## See also
 
-- [Workers](workers.md) -- runtime behaviour, heartbeats, graceful shutdown
-- [Queues](queues.md) -- queue semantics and worker scoping
-- [Dead-letter queue](dead-letter.md) -- the `soniq_dead_letter_jobs` table
+- [Workers](../tutorial/02-running-workers.md) -- runtime behaviour, heartbeats, graceful shutdown
+- [Queues](../tutorial/05-queues.md) -- queue semantics and worker scoping
+- [Dead-letter queue](../reference/dead-letter.md) -- the `soniq_dead_letter_jobs` table
 - [Transactional enqueue](../guides/transactional-enqueue.md) -- four code patterns for the headline feature

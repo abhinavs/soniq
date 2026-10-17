@@ -44,7 +44,7 @@ from prometheus_client import start_http_server
 from soniq import Soniq
 from soniq.observability import PrometheusMetricsSink
 
-app = Soniq(
+soniq = Soniq(
     database_url="postgresql://localhost/myapp",
     metrics_sink=PrometheusMetricsSink(),
 )
@@ -70,7 +70,7 @@ from prometheus_client import CollectorRegistry
 # Keep Soniq's metrics out of the default registry.
 reg = CollectorRegistry()
 sink = PrometheusMetricsSink(registry=reg, prefix="myapp_jobs")
-app = Soniq(metrics_sink=sink)
+soniq = Soniq(metrics_sink=sink)
 ```
 
 The sink does not start an HTTP server, push to a gateway, or scrape its own state - those are intentionally separate concerns. Use the `prometheus_client` helpers (`start_http_server`, `push_to_gateway`) per your scrape model.
@@ -109,7 +109,7 @@ class StatsdMetricsSink:
 
 
 import statsd  # or whatever client your platform ships
-app = Soniq(metrics_sink=StatsdMetricsSink(statsd.StatsClient()))
+soniq = Soniq(metrics_sink=StatsdMetricsSink(statsd.StatsClient()))
 ```
 
 ## Combining with the noop default
@@ -118,7 +118,7 @@ The default sink is `NoopMetricsSink` - silent, zero overhead. Soniq treats `met
 
 ## Caveats
 
-- The sink is invoked by the worker, not by the enqueuer. `await app.enqueue(...)` does not call into the sink. If you need enqueue-time metrics, instrument your application code directly.
+- The sink is invoked by the worker, not by the enqueuer. `await soniq.enqueue(...)` does not call into the sink. If you need enqueue-time metrics, instrument your application code directly.
 - Sink methods that raise will propagate up and fail the job. Wrap your sink in a try/except if you want metrics to be best-effort:
 
   ```python

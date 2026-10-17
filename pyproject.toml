@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soniq"
-version = "0.0.5"
+version = "0.1.0rc1"
 description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
 authors = [{ name = "Abhinav Saxena", email = "abhinav@apiclabs.com" }]
 readme = "README.md"
@@ -12,6 +12,8 @@ license = "MIT"
 requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 4 - Beta",
+  "Framework :: AsyncIO",
+  "Framework :: FastAPI",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -30,6 +32,11 @@ keywords = [
   "redis-alternative",
   "developer-experience",
   "background-jobs",
+  "fastapi",
+  "sqlalchemy",
+  "asyncio",
+  "background-tasks",
+  "task-queue",
 ]
 dependencies = [
   "asyncpg>=0.30.0,<1.0",
@@ -50,6 +57,8 @@ dashboard = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
 sqlite = ["aiosqlite>=0.19.0"]
 webhooks = ["aiohttp>=3.8.0", "cryptography>=3.4.0"]
 logging = ["structlog>=22.0.0"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
+psycopg = ["psycopg[binary]>=3.1"]
 dev = [
   "pytest>=7.4.0",
   "pytest-asyncio>=0.21.0",
@@ -66,13 +75,16 @@ dev = [
   "cryptography>=3.4.0",
   "fastapi>=0.100.0",
   "uvicorn>=0.20.0",
+  "sqlalchemy[asyncio]>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.1",
 ]
 full = ["soniq[sqlite,webhooks,logging,dashboard]"]
 
 [project.urls]
-Homepage = "https://github.com/abhinavs/soniq"
+Homepage = "https://soniq.abhinav.co"
 Repository = "https://github.com/abhinavs/soniq"
-Documentation = "https://github.com/abhinavs/soniq/tree/main/docs"
+Documentation = "https://soniq.abhinav.co"
 Changelog = "https://github.com/abhinavs/soniq/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/abhinavs/soniq/issues"
 
@@ -88,6 +100,7 @@ soniq = ["py.typed"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.black]
 # Standard Black configuration
