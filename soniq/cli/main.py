@@ -23,7 +23,7 @@ import os
 import sys
 from typing import List, Optional
 
-from soniq import Soniq
+from soniq import Soniq, __version__
 from soniq.plugin import discover_plugins
 
 from .colors import print_status
@@ -63,6 +63,7 @@ For more information, visit: https://github.com/abhinavs/soniq
     # Surface the plugin discovery flag at the top level so the parser
     # itself accepts it; ``parse_known_args`` reads it before we know
     # which subcommand the operator wants.
+    parser.add_argument("--version", action="version", version=f"soniq {__version__}")
     parser.add_argument(
         "--plugins",
         default=None,
