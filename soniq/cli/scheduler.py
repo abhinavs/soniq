@@ -74,23 +74,23 @@ async def handle_scheduler(args) -> int:
     async with execution_app(args, modules) as app:
         scheduler = app.scheduler
 
-        print(
-            f"Starting Soniq recurring scheduler (checking every {args.check_interval}s)"
-        )
-        print("Use Ctrl+C to stop gracefully")
-
         # SIGTERM is how Docker, Kubernetes and systemd stop a process, so
         # treat it like Ctrl+C instead of dying without stopping the loop.
         stop = asyncio.Event()
         signals = GracefulSignalHandler()
         signals.setup_signal_handlers(stop)
         try:
+            # start() can lower the interval for short every= schedules, so
+            # announce it afterwards with the value actually in use.
             await scheduler.start(check_interval=args.check_interval)
+            interval = f"checking every {scheduler.check_interval}s"
             if scheduler.check_interval < args.check_interval:
-                print(
-                    f"Checking every {scheduler.check_interval}s instead, to keep "
-                    "up with the shortest every= schedule"
+                interval += (
+                    f", lowered from {args.check_interval}s to keep up with "
+                    "the shortest every= schedule"
                 )
+            print(f"Starting Soniq recurring scheduler ({interval})")
+            print("Use Ctrl+C to stop gracefully")
             while scheduler.running and not stop.is_set():
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=10)

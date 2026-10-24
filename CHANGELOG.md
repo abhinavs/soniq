@@ -53,7 +53,7 @@ None in this release.
 - `soniq scheduler` now stops cleanly on `SIGTERM` (Docker, Kubernetes, systemd), the same as on `Ctrl+C`. It used to die without stopping the scheduler loop.
 - The CLI no longer emits a `DeprecationWarning` for `asyncio.iscoroutinefunction` on Python 3.14.
 - The CLI no longer prints the database password. Messages such as "Using instance-based configuration: ..." show `user:***@host`, and a `?password=` query parameter is masked too.
-- `soniq scheduler` now says so when it checks more often than `--check-interval` to keep up with a short `every=` schedule. The startup line used to show only the requested interval.
+- The `soniq scheduler` startup line shows the interval it actually uses. With a short `every=` schedule it reads "checking every 5s, lowered from 60s to keep up with the shortest every= schedule" instead of claiming 60s.
 
 ## [0.0.5]
 
