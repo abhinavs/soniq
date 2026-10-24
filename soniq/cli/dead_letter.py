@@ -42,7 +42,7 @@ def add_dead_letter_cmd(subparsers) -> None:
         action="store_true",
         help=(
             "Report what would happen without making changes. Honoured for "
-            "``replay --all`` and ``delete --all``; ``cleanup`` ignores it."
+            "``replay --all``, ``delete --all`` and ``cleanup``."
         ),
     )
     parser.add_argument(
@@ -173,8 +173,15 @@ async def handle_dead_letter(args) -> int:
             return 1
 
         if action == "cleanup":
-            # ``cleanup_old_dead_letter_jobs`` does not honour ``--dry-run``;
-            # the flag stays on the parser for symmetry but is a no-op here.
+            if args.dry_run:
+                count = await dead_letter.cleanup_old_dead_letter_jobs(
+                    days=args.days, dry_run=True
+                )
+                print(
+                    f"Dry run: would remove {count} dead-letter job(s) older "
+                    f"than {args.days} days."
+                )
+                return 0
             removed = await dead_letter.cleanup_old_dead_letter_jobs(days=args.days)
             print(f"Removed {removed} dead-letter job(s) older than {args.days} days.")
             return 0

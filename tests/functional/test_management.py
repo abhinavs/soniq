@@ -137,4 +137,4 @@ async def test_dead_lettered_job_leaves_soniq_jobs(app):
     await app.run_worker(run_once=True)
     await app.run_worker(run_once=True)
 
-    assert await app.get_job(job_id) is None
+    assert (await app.get_job(job_id))["status"] == "dead_letter"

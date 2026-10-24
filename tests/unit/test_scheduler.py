@@ -223,3 +223,16 @@ async def test_periodic_decorator_rejects_neither(app):
         @app.periodic(name="bad2")
         async def bad():
             return None
+
+
+@pytest.mark.asyncio
+async def test_check_interval_drops_to_shortest_every(app):
+    @app.periodic(every=timedelta(seconds=5), name="fast")
+    async def fast():
+        return None
+
+    await app.scheduler.start(check_interval=60)
+    try:
+        assert app.scheduler.check_interval == 5
+    finally:
+        await app.scheduler.stop()

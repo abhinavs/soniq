@@ -56,7 +56,7 @@ async def test_failure_and_retry(backend):
         reason="max_retries_exceeded",
     )
 
-    assert await backend.get_job("j1") is None
+    assert (await backend.get_job("j1"))["status"] == "dead_letter"
 
 
 async def test_cancel_only_works_on_queued(backend):
@@ -123,4 +123,4 @@ async def test_dead_letter_removes_row_from_soniq_jobs(backend):
         reason="max_retries_exceeded",
     )
 
-    assert await backend.get_job("j1") is None
+    assert (await backend.get_job("j1"))["status"] == "dead_letter"

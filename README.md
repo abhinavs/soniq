@@ -1,5 +1,5 @@
 <p align="left">
-  <img src="docs/assets/logo.svg" width="72" alt="Soniq logo" />
+  <img src="https://raw.githubusercontent.com/abhinavs/soniq/main/docs/assets/logo.svg" width="72" alt="Soniq logo" />
 </p>
 
 # Soniq
@@ -75,7 +75,7 @@ With Soniq the task is a row in Postgres. The change is small:
      return {"id": user.id}
 ```
 
-`run_worker=True` runs the worker in the same process, so you still deploy one service. When the load grows, run `soniq worker` as its own process. [examples/backgroundtasks_vs_soniq](examples/backgroundtasks_vs_soniq) restarts a server mid-send with both versions and counts the lost jobs. See the [FastAPI guide](docs/guides/fastapi.md) for details.
+`run_worker=True` runs the worker in the same process, so you still deploy one service. When the load grows, run `soniq worker` as its own process. [examples/backgroundtasks_vs_soniq](https://github.com/abhinavs/soniq/tree/main/examples/backgroundtasks_vs_soniq) restarts a server mid-send with both versions and counts the lost jobs. See the [FastAPI guide](https://github.com/abhinavs/soniq/blob/main/docs/guides/fastapi.md) for details.
 
 ## Transactional enqueue
 
@@ -99,9 +99,9 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
-A Redis-backed queue cannot do this. Its writes go to a different system, so you need an outbox table and a process to drain it. Soniq's job table is in your Postgres, so one transaction covers both. See the [transactional enqueue guide](docs/guides/transactional-enqueue.md).
+A Redis-backed queue cannot do this. Its writes go to a different system, so you need an outbox table and a process to drain it. Soniq's job table is in your Postgres, so one transaction covers both. See the [transactional enqueue guide](https://github.com/abhinavs/soniq/blob/main/docs/guides/transactional-enqueue.md).
 
-Soniq is at-least-once, not exactly-once. A worker can crash after it runs your handler but before it marks the row done. The heartbeat sweep then requeues the job. Write handlers so they can run again safely. See [docs/guides/cross-service-jobs.md](docs/guides/cross-service-jobs.md) for the delivery details.
+Soniq is at-least-once, not exactly-once. A worker can crash after it runs your handler but before it marks the row done. The heartbeat sweep then requeues the job. That takes up to `SONIQ_HEARTBEAT_TIMEOUT` plus `SONIQ_CLEANUP_INTERVAL` (10 minutes with the defaults), so lower both if crashed jobs need to come back sooner. Write handlers so they can run again safely. See [docs/guides/cross-service-jobs.md](https://github.com/abhinavs/soniq/blob/main/docs/guides/cross-service-jobs.md) for the delivery details.
 
 ## Why Soniq
 
@@ -118,7 +118,7 @@ Soniq uses your existing PostgreSQL. One dependency. One place your data lives. 
 | Built-in dashboard           | Yes   | No (Flower) | No     |
 | Dead-letter queue            | Yes   | No          | No     |
 
-For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-backed queues, see [docs/compare.md](docs/compare.md). For numbers, see [docs/benchmarks.md](docs/benchmarks.md). For what we promise to keep stable, see [docs/stability.md](docs/stability.md).
+For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-backed queues, see [docs/compare.md](https://github.com/abhinavs/soniq/blob/main/docs/compare.md). For numbers, see [docs/benchmarks.md](https://github.com/abhinavs/soniq/blob/main/docs/benchmarks.md). For what we promise to keep stable, see [docs/stability.md](https://github.com/abhinavs/soniq/blob/main/docs/stability.md).
 
 ## When NOT to use Soniq
 
@@ -146,7 +146,7 @@ For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-bac
 A built-in web dashboard for inspecting jobs, queues, and recent failures. Read-only by default; opt in to retry/cancel/delete actions with `SONIQ_DASHBOARD_WRITE_ENABLED=true` (which also requires `SONIQ_DASHBOARD_API_KEY` as a safety interlock).
 
 <p align="left">
-  <img src="docs/assets/soniq_dashboard.gif" width="800" alt="Animated Soniq dashboard: job counts and recent jobs update as signups and orders are processed" />
+  <img src="https://raw.githubusercontent.com/abhinavs/soniq/main/docs/assets/soniq_dashboard.gif" width="800" alt="Animated Soniq dashboard: job counts and recent jobs update as signups and orders are processed" />
 </p>
 
 ```bash
@@ -170,24 +170,24 @@ The default install is batteries-included: `croniter` (so `@periodic` and the re
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md)
-- [Tutorial: defining jobs](docs/tutorial/01-defining-jobs.md)
-- [FastAPI integration](docs/guides/fastapi.md)
-- [Transactional enqueue](docs/guides/transactional-enqueue.md)
-- [Compare tools](docs/compare.md)
-- [Benchmarks](docs/benchmarks.md)
-- [Stability and versioning](docs/stability.md)
-- [FastAPI demo app](examples/fastapi_demo)
-- [Going to production](docs/production/going-to-production.md)
-- [Deployment](docs/production/deployment.md)
-- [CLI reference](docs/cli/commands.md)
-- [API reference](docs/api/soniq.md)
+- [Quickstart](https://github.com/abhinavs/soniq/blob/main/docs/quickstart.md)
+- [Tutorial: defining jobs](https://github.com/abhinavs/soniq/blob/main/docs/tutorial/01-defining-jobs.md)
+- [FastAPI integration](https://github.com/abhinavs/soniq/blob/main/docs/guides/fastapi.md)
+- [Transactional enqueue](https://github.com/abhinavs/soniq/blob/main/docs/guides/transactional-enqueue.md)
+- [Compare tools](https://github.com/abhinavs/soniq/blob/main/docs/compare.md)
+- [Benchmarks](https://github.com/abhinavs/soniq/blob/main/docs/benchmarks.md)
+- [Stability and versioning](https://github.com/abhinavs/soniq/blob/main/docs/stability.md)
+- [FastAPI demo app](https://github.com/abhinavs/soniq/tree/main/examples/fastapi_demo)
+- [Going to production](https://github.com/abhinavs/soniq/blob/main/docs/production/going-to-production.md)
+- [Deployment](https://github.com/abhinavs/soniq/blob/main/docs/production/deployment.md)
+- [CLI reference](https://github.com/abhinavs/soniq/blob/main/docs/cli/commands.md)
+- [API reference](https://github.com/abhinavs/soniq/blob/main/docs/api/soniq.md)
 
 ### For AI coding agents
 
-- [`AGENTS.md`](AGENTS.md) - canonical patterns, anti-patterns, and the four mistakes agents most often make.
-- [`docs/llms.txt`](docs/llms.txt) - curated index of the canonical pages, following the [llms.txt convention](https://llmstxt.org).
-- [`docs/llms-full.txt`](docs/llms-full.txt) - the canonical pages concatenated for one-shot context loading.
+- [`AGENTS.md`](https://github.com/abhinavs/soniq/blob/main/AGENTS.md) - canonical patterns, anti-patterns, and the four mistakes agents most often make.
+- [`docs/llms.txt`](https://github.com/abhinavs/soniq/blob/main/docs/llms.txt) - curated index of the canonical pages, following the [llms.txt convention](https://llmstxt.org).
+- [`docs/llms-full.txt`](https://github.com/abhinavs/soniq/blob/main/docs/llms-full.txt) - the canonical pages concatenated for one-shot context loading.
 
 ## License
 

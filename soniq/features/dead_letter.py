@@ -517,9 +517,24 @@ class DeadLetterService:
                 resurrection_success_rate=resurrection_success_rate,
             )
 
-    async def cleanup_old_dead_letter_jobs(self, days: int = 30) -> int:
-        """Clean up dead letter jobs older than specified days"""
+    async def cleanup_old_dead_letter_jobs(
+        self, days: int = 30, dry_run: bool = False
+    ) -> int:
+        """Clean up dead letter jobs older than specified days.
+
+        With ``dry_run=True``, count the jobs that would be removed and
+        delete nothing.
+        """
         async with self._acquire() as conn:
+            if dry_run:
+                count = await conn.fetchval(
+                    f"""
+                    SELECT COUNT(*) FROM {self.table_name}
+                    WHERE moved_to_dead_letter_at < NOW() - ($1 || ' days')::INTERVAL
+                """,
+                    str(days),
+                )
+                return int(count)
             result = await conn.execute(
                 f"""
                 DELETE FROM {self.table_name}

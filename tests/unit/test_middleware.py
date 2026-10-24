@@ -258,5 +258,5 @@ async def test_middleware_exception_lets_processor_record_failure():
 
     # max_retries=0 -> max_attempts=1, dead-letter on first failure.
     assert events == []
-    assert job is None
+    assert job["status"] == "dead_letter"
     assert "middleware says no" in dlq_row["last_error"]

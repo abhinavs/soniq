@@ -42,7 +42,7 @@ async def test_timed_out_job_retried_then_dead_lettered():
     processed = await worker.run_once(queues=None, max_jobs=1)
     assert processed is True
 
-    assert await app.get_job(job_id) is None
+    assert (await app.get_job(job_id))["status"] == "dead_letter"
     pool = await app._get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

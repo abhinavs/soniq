@@ -119,7 +119,7 @@ async def test_failed_job_dead_letters_after_max_attempts(backend, registry):
     await process_job_via_backend(
         backend=backend, job_registry=registry, queues=["default"]
     )
-    assert await backend.get_job(job_id) is None
+    assert (await backend.get_job(job_id))["status"] == "dead_letter"
     assert job_id in backend._dead_letter_jobs
 
 
@@ -147,7 +147,7 @@ async def test_dead_lettered_job_removed_from_soniq_jobs(backend, registry):
     await process_job_via_backend(
         backend=backend, job_registry=registry, queues=["default"]
     )
-    assert await backend.get_job(job_id) is None
+    assert (await backend.get_job(job_id))["status"] == "dead_letter"
     assert job_id in backend._dead_letter_jobs
 
 

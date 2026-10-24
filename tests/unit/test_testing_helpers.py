@@ -4,6 +4,7 @@ pin its surface so accidental breakage shows up in unit runs.
 """
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -15,7 +16,7 @@ def test_public_surface():
     # know the internal module layout.
     assert MemoryBackend is not None
     assert callable(make_app)
-    assert asyncio.iscoroutinefunction(wait_until)
+    assert inspect.iscoroutinefunction(wait_until)
 
 
 def test_make_app_uses_memory_backend():

@@ -14,6 +14,9 @@ Fixtures:
 
 Both fixtures read the `soniq` marker. `@pytest.mark.soniq(app="pkg.mod:app")`
 copies the jobs, hooks and middleware of your own instance into the fixture.
+It also points your instance's `enqueue` and `enqueue_many` at the fixture
+for the test, so `my_job.enqueue(...)` and code that calls your module-level
+`soniq.enqueue(...)` land in the fixture instead of your real database.
 """
 
 import importlib
@@ -43,6 +46,9 @@ def _build(request: pytest.FixtureRequest, **kwargs: Any) -> Soniq:
         app._job_registry = source._job_registry
         app._hooks = source._hooks
         app._middleware = source._middleware
+        monkeypatch = request.getfixturevalue("monkeypatch")
+        monkeypatch.setattr(source, "enqueue", app.enqueue)
+        monkeypatch.setattr(source, "enqueue_many", app.enqueue_many)
     return app
 
 

@@ -29,7 +29,7 @@ def add_dashboard_cmd(subparsers) -> None:
         ),
     )
     database_url_argument(parser)
-    app_argument(parser)
+    app_argument(parser, positional=True)
     parser.set_defaults(func=handle_dashboard)
 
 

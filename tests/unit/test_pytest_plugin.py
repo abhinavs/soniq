@@ -24,6 +24,14 @@ async def test_drain(soniq_memory):
     assert sorted(await drain(soniq_memory)) == [4, 10]
     assert await drain(soniq_memory) == []
 
+@pytest.mark.soniq(app="myjobs:app")
+async def test_enqueue_routes_to_fixture(soniq_memory):
+    import myjobs
+    await myjobs.double.enqueue(n=3)
+    await myjobs.app.enqueue(myjobs.double, n=4)
+    await myjobs.app.enqueue_many(myjobs.double, [{"n": 5}])
+    assert sorted(await drain(soniq_memory)) == [6, 8, 10]
+
 async def test_inline_job(soniq_memory):
     @soniq_memory.job()
     async def one():
@@ -44,11 +52,11 @@ def _setup(pytester, conftest):
 
 def test_opt_in_runs_drain(pytester):
     _setup(pytester, 'pytest_plugins = ["soniq.testing.pytest_plugin"]')
-    pytester.runpytest_subprocess().assert_outcomes(passed=2)
+    pytester.runpytest_subprocess().assert_outcomes(passed=3)
 
 
 def test_not_loaded_without_opt_in(pytester):
     _setup(pytester, "")
     result = pytester.runpytest_subprocess()
-    result.assert_outcomes(errors=2)
+    result.assert_outcomes(errors=3)
     result.stdout.fnmatch_lines(["*fixture 'soniq_memory' not found*"])

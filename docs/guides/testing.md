@@ -47,7 +47,9 @@ async def test_welcome_email(soniq_memory):
 
 `drain` runs every ready job and returns the results of the jobs that finished. Jobs scheduled for later stay in the queue.
 
-The async tests need `pytest-asyncio`.
+The marker also points your instance's `enqueue` and `enqueue_many` at the fixture for the length of the test. So `send_email.enqueue(...)`, and app code that calls `soniq.enqueue(...)` on your module-level instance, put jobs in the fixture's queue and not in your real database.
+
+The async tests need `pytest-asyncio`. Either set `asyncio_mode = "auto"` in your pytest config or mark each test with `@pytest.mark.asyncio`. Without one of them, pytest skips the async tests instead of running them.
 
 ## Memory backend for unit tests
 

@@ -58,8 +58,8 @@ await soniq.logs.search_logs("error")
 
 The dashboard is wired up by running the dashboard process
 (`soniq dashboard` or `create_dashboard_app(soniq)`); HTTP-level write
-authorization is enforced by `SONIQ_DASHBOARD_API_KEY` or by being a
-loopback caller.
+authorization needs `SONIQ_DASHBOARD_WRITE_ENABLED=true` plus
+`SONIQ_DASHBOARD_API_KEY`.
 
 
 ## Lifecycle
@@ -140,7 +140,7 @@ These are thin wrappers over the storage backend. Each accepts a `job_id` string
 
 | Method | Returns | Description |
 |---|---|---|
-| `get_job(job_id)` | `dict \| None` | Full job record or `None` if not found. |
+| `get_job(job_id)` | `dict \| None` | Full job record or `None` if not found. A dead-lettered job comes back with `status` `"dead_letter"` and a `dead_letter_reason`. |
 | `get_result(job_id)` | `Any \| None` | Return value of a completed job, or `None`. |
 | `cancel_job(job_id)` | `bool` | `True` if the job was cancelled. |
 | `delete_job(job_id)` | `bool` | `True` if the job was deleted. |

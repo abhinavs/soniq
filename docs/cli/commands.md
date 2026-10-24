@@ -24,10 +24,10 @@ soniq setup myapp.jobs:soniq
 soniq worker myapp.jobs:soniq --concurrency 4
 ```
 
-- `worker`, `setup` and `scheduler` accept the app as an optional positional
-  argument `APP`.
 - `worker`, `setup`, `scheduler`, `status`, `inspect`, `dashboard` and
-  `dead-letter` accept the same value with `--app module:attribute`.
+  `migrate-status` accept the app as an optional positional argument `APP`.
+- All of those and `dead-letter` accept the same value with
+  `--app module:attribute`.
 - If you give only a module (`myapp.jobs`), Soniq finds the instance in that
   module.
 
@@ -98,7 +98,7 @@ once to finish current jobs, twice to force exit.
 Show system health, queue statistics, and optionally recent jobs.
 
 ```bash
-soniq status [--verbose] [--jobs]
+soniq status [APP] [--verbose] [--jobs]
 ```
 
 | Flag | Type | Default | Description |
@@ -123,7 +123,7 @@ Output includes:
 List registered workers and recurring schedules.
 
 ```bash
-soniq inspect [--stale] [--cleanup] [--schedules]
+soniq inspect [APP] [--stale] [--cleanup] [--schedules]
 ```
 
 | Flag | Type | Default | Description |
@@ -204,12 +204,11 @@ soniq dead-letter delete --all --dry-run             # report count + sample, no
 soniq dead-letter delete --all --yes                 # skip the confirmation prompt
 ```
 
-**cleanup** -- remove dead-letter jobs older than N days. The `--dry-run`
-flag is accepted for symmetry but is currently a no-op: cleanup always
-deletes.
+**cleanup** -- remove dead-letter jobs older than N days.
 
 ```bash
 soniq dead-letter cleanup --days 30
+soniq dead-letter cleanup --days 30 --dry-run    # report the count, no changes
 ```
 
 **export** -- export dead-letter jobs to a file.
@@ -227,7 +226,7 @@ soniq dead-letter export --format csv --output dead_letter.csv
 | `--filter` | `str` | | Filter by job name pattern. |
 | `--all` | flag | off | Apply action to all matching jobs. |
 | `--days` | `int` | `30` | Age threshold for `cleanup`. |
-| `--dry-run` | flag | off | Honoured on `replay --all` and `delete --all` (reports count + sample). Accepted on `cleanup` for symmetry but ignored -- cleanup always deletes. |
+| `--dry-run` | flag | off | Report what would happen and change nothing. Honoured on `replay --all`, `delete --all` (count + sample) and `cleanup` (count). |
 | `--yes`, `-y` | flag | off | Skip the interactive confirmation for bulk `replay --all` / `delete --all`. Required in non-interactive shells. |
 | `--format` | `csv \| json` | `csv` | Export format. |
 | `--output` | `str` | | Output file path (required for `export`). |
@@ -241,7 +240,7 @@ Launch the web dashboard for monitoring jobs, queues, and workers.
 Requires `pip install soniq[dashboard]`.
 
 ```bash
-soniq dashboard [--host HOST] [--port PORT] [--reload] [--jobs-modules MODULES]
+soniq dashboard [APP] [--host HOST] [--port PORT] [--reload] [--jobs-modules MODULES]
 ```
 
 | Flag | Type | Default | Description |
@@ -258,7 +257,7 @@ soniq dashboard --host 0.0.0.0 --port 6161
 Open `http://localhost:6161` in your browser.
 
 The dashboard is read-only by default. Set `SONIQ_DASHBOARD_WRITE_ENABLED=true`
-to enable replay, delete, and cancel actions. Dead-letter replay additionally
+and `SONIQ_DASHBOARD_API_KEY` to enable replay, delete, and cancel actions. Dead-letter replay additionally
 needs your job modules loaded (`--jobs-modules` or `SONIQ_JOBS_MODULES`) so the
 replayed job's retry limits can be resolved, exactly like `soniq dead-letter
 replay`.
@@ -275,7 +274,7 @@ soniq scheduler [APP] [--check-interval SECONDS] [--jobs-modules MODULES]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--check-interval` | `int` | `60` | Seconds between checks for due recurring jobs. |
+| `--check-interval` | `int` | `60` | Seconds between checks for due recurring jobs. Lowered automatically to the shortest `every=` interval. |
 | `--jobs-modules` | `str` | | Comma-separated list of modules to import on startup. Merged with `SONIQ_JOBS_MODULES` (adds to, does not replace). The scheduler must import your `@soniq.periodic` definitions to know what to fire. |
 
 ```bash
@@ -283,7 +282,7 @@ soniq scheduler [APP] [--check-interval SECONDS] [--jobs-modules MODULES]
 soniq scheduler --check-interval 30
 ```
 
-Stop the scheduler gracefully with `Ctrl+C`.
+Stop the scheduler gracefully with `Ctrl+C` or `SIGTERM`.
 
 To inspect registered schedules, use `soniq inspect` (it includes a
 **Recurring Schedules** section) or `soniq inspect --schedules` to list each
@@ -295,7 +294,7 @@ one by name.
 Show which database migrations have been applied and which are pending.
 
 ```bash
-soniq migrate-status
+soniq migrate-status [APP]
 ```
 
 Output lists each migration with its status (applied or pending). If migrations

@@ -48,7 +48,7 @@ async def test_last_error_includes_traceback():
     await process_job_via_backend(backend, registry, queues=["default"])
 
     # DLQ Option A: dead-lettered jobs live in soniq_dead_letter_jobs.
-    assert await backend.get_job("err-1") is None
+    assert (await backend.get_job("err-1"))["status"] == "dead_letter"
     dlq_row = backend._dead_letter_jobs["err-1"]
 
     last_error = dlq_row["last_error"]
@@ -85,6 +85,6 @@ async def test_last_error_truncated_to_reasonable_size():
     )
     await process_job_via_backend(backend, registry, queues=["default"])
 
-    assert await backend.get_job("err-big") is None
+    assert (await backend.get_job("err-big"))["status"] == "dead_letter"
     dlq_row = backend._dead_letter_jobs["err-big"]
     assert len(dlq_row["last_error"]) <= 8192

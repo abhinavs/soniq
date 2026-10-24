@@ -140,8 +140,8 @@ async def test_mark_job_dead_letter(backend):
         reason="max_retries_exceeded",
     )
 
-    # DLQ Option A: the row leaves soniq_jobs entirely.
-    assert await backend.get_job(job_id) is None
+    # DLQ Option A: the row moves to soniq_dead_letter_jobs; get_job still finds it.
+    assert (await backend.get_job(job_id))["status"] == "dead_letter"
     async with backend.acquire() as conn:
         dlq_row = await conn.fetchrow(
             "SELECT * FROM soniq_dead_letter_jobs WHERE id = $1",
@@ -309,3 +309,10 @@ async def test_create_jobs_bulk_empty_list_is_a_noop(backend):
     )
     rows = await backend.list_jobs()
     assert not any(r["job_name"] == "test.bulk_empty" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_get_job_finds_dead_lettered_job(backend):
+    from tests.functional.test_get_job_dead_letter import _check
+
+    await _check(backend)

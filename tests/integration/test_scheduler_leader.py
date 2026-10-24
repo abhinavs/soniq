@@ -157,3 +157,32 @@ async def test_calculate_next_run_advances_for_cron():
     now = datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc)
     nxt = _calculate_next_run("cron", "0 9 * * *", now)
     assert nxt == datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_upserts_of_same_name_leave_one_row(app):
+    """Several schedulers starting at once all upsert the same @periodic
+    job. They must end with one row, or the job fires once per row."""
+    import asyncio
+
+    others = [Soniq(database_url=TEST_DATABASE_URL) for _ in range(4)]
+    try:
+        for a in [app, *others]:
+
+            @a.job(name="race.tick")
+            async def tick():
+                return None
+
+        for _ in range(5):
+            await asyncio.gather(
+                *(a.scheduler.add("race.tick", every=60) for a in [app, *others])
+            )
+        pool = await app._get_pool()
+        async with pool.acquire() as conn:
+            n = await conn.fetchval(
+                "SELECT count(*) FROM soniq_recurring_jobs WHERE job_name = 'race.tick'"
+            )
+        assert n == 1
+    finally:
+        for a in others:
+            await a.close()

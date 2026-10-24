@@ -21,29 +21,6 @@ except ImportError:
     FASTAPI_AVAILABLE = False
 
 
-_LOCALHOST_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
-def _is_localhost_request(request: "Request") -> bool:
-    """Whether the request originated on the same host as the dashboard.
-
-    A request is treated as local when:
-    - the TCP peer address is loopback, AND
-    - the Host header (if present) names a loopback address.
-
-    Both checks matter: a reverse proxy on the same host can connect from
-    127.0.0.1 with an arbitrary `Host:` header, and we don't want to silently
-    let a public-facing proxy bypass write protection.
-    """
-    client = request.client
-    if client is None or client.host not in _LOCALHOST_HOSTS:
-        return False
-    host_header = request.headers.get("host", "")
-    # Strip port if present
-    host = host_header.split(":", 1)[0].lower()
-    return host == "" or host in _LOCALHOST_HOSTS
-
-
 def _is_dashboard_write_enabled() -> bool:
     """Whether mutating dashboard actions are enabled by env config."""
     import os
@@ -60,11 +37,10 @@ def _require_write_authorization(request: "Request") -> None:
     """Guard called from each write endpoint.
 
     Mutating endpoints are disabled unless ``SONIQ_DASHBOARD_WRITE_ENABLED``
-    is true-ish. When writes are enabled, we still require either:
-    1. ``SONIQ_DASHBOARD_API_KEY`` configured (the global API-key
-       middleware will have already validated the key by the time this
-       runs), or
-    2. The request originates on localhost.
+    is true-ish. Writes also need ``SONIQ_DASHBOARD_API_KEY``; the global
+    API-key middleware has already checked the key by the time this runs.
+    There is no localhost exemption: a reverse proxy on the same host
+    connects from loopback, so "local" can't be told apart from "public".
     """
     import os
 
@@ -77,18 +53,14 @@ def _require_write_authorization(request: "Request") -> None:
             ),
         )
 
-    api_key_set = bool(os.environ.get("SONIQ_DASHBOARD_API_KEY", ""))
-    if api_key_set:
+    if os.environ.get("SONIQ_DASHBOARD_API_KEY"):
         return  # Global middleware already validated the key.
-    if _is_localhost_request(request):
-        return
     raise HTTPException(
         status_code=403,
         detail=(
-            "Dashboard writes from non-local clients require "
-            "SONIQ_DASHBOARD_API_KEY. Set it on the dashboard process "
-            "and pass `X-API-Key: <key>` (or `?api_key=<key>`) on each "
-            "write request."
+            "Dashboard writes require SONIQ_DASHBOARD_API_KEY. Set it on "
+            "the dashboard process and pass `X-API-Key: <key>` (or "
+            "`?api_key=<key>`) on each write request."
         ),
     )
 

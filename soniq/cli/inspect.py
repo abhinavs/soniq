@@ -26,7 +26,7 @@ def add_inspect_cmd(subparsers) -> None:
         help="List each recurring schedule (name, status, next run)",
     )
     database_url_argument(parser)
-    app_argument(parser)
+    app_argument(parser, positional=True)
     parser.set_defaults(func=handle_inspect)
 
 

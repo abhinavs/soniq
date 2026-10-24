@@ -12,7 +12,7 @@ The fast version. Every row is expanded in the sections that follow.
 | `Queue("urgent")` | `queue="urgent"` argument on `@soniq.job(...)` or `enqueue(...)` | One app, many queue names. |
 | Plain Python function (no decorator) | `@soniq.job()` decorator | Soniq registers by decorator; RQ resolves by import path at run time. |
 | `q.enqueue(func, arg)` | `await soniq.enqueue(func, arg=arg)` | Async, keyword-only args. |
-| `q.enqueue_in(timedelta(seconds=30), func, arg)` | `await soniq.enqueue(func, delay=30, arg=arg)` | |
+| `q.enqueue_in(timedelta(seconds=30), func, arg)` | `await soniq.enqueue(func, scheduled_at=timedelta(seconds=30), arg=arg)` | |
 | `q.enqueue_at(datetime, func, arg)` | `await soniq.enqueue(func, scheduled_at=datetime, arg=arg)` | |
 | `q.enqueue(func, retry=Retry(max=3, interval=[10, 30, 60]))` | `@soniq.job(retries=3, retry_delay=[10, 30, 60])` | Retries are a job-definition concern, not per-enqueue. |
 | `job.get_status()` | `(await soniq.get_job(job_id))["status"]` | Status values differ - see "Job lifecycle". |
@@ -104,7 +104,7 @@ Soniq's `enqueue` is keyword-only for job arguments. Pass the function as the fi
 await soniq.enqueue(send_email, to="dev@example.com", subject="Welcome")
 ```
 
-The keyword-only style means there's never ambiguity between framework options (`queue`, `delay`, `priority`, `scheduled_at`) and your job's own arguments. RQ avoids the same ambiguity by namespacing options under `Retry(...)` etc., which is a different solution to the same problem.
+The keyword-only style means there's never ambiguity between framework options (`queue`, `priority`, `scheduled_at`) and your job's own arguments. RQ avoids the same ambiguity by namespacing options under `Retry(...)` etc., which is a different solution to the same problem.
 
 ## Sync vs async handlers
 

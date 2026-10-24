@@ -32,3 +32,11 @@ def test_no_features_umbrella():
     assert not hasattr(feat_pkg, "enterprise")
     assert "SoniqFeatures" not in feat_pkg.__all__
     assert "features" not in feat_pkg.__all__
+
+
+def test_soniq_error_is_exported():
+    import soniq
+    from soniq.errors import SoniqError
+
+    assert soniq.SoniqError is SoniqError
+    assert "SoniqError" in soniq.__all__

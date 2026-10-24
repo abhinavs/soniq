@@ -9,6 +9,7 @@ the StorageBackend abstraction.
 import asyncio
 import concurrent.futures
 import inspect
+import json
 import logging
 import time
 import traceback
@@ -442,6 +443,18 @@ async def _dispatch_and_record(
             await _emit_end("snoozed")
             return True
 
+        # The handler's side effects already happened, so a bad return value
+        # doesn't fail the job. Postgres and SQLite store str() of it instead.
+        try:
+            json.dumps(job_result)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Job %s (%s) returned a %s, which is not JSON-serializable; "
+                "Postgres and SQLite store str() of it as the result",
+                job_id,
+                job_name,
+                type(job_result).__name__,
+            )
         await backend.mark_job_done(
             job_id, result_ttl=settings.result_ttl, result=job_result
         )

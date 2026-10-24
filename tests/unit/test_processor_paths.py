@@ -66,7 +66,7 @@ async def test_corrupted_args_type_dead_letters():
     assert result is True
     # DLQ Option A: dead-lettered rows move into _dead_letter_jobs and
     # the source row is removed from soniq_jobs.
-    assert await backend.get_job("job-1") is None
+    assert (await backend.get_job("job-1"))["status"] == "dead_letter"
     assert "job-1" in backend._dead_letter_jobs
 
 
@@ -82,7 +82,7 @@ async def test_string_args_are_contract_violation():
     backend, registry = await _setup(my_task, args="not valid json{{{")
     result = await process_job_via_backend(backend, registry, queues=["default"])
     assert result is True
-    assert await backend.get_job("job-1") is None
+    assert (await backend.get_job("job-1"))["status"] == "dead_letter"
     assert "job-1" in backend._dead_letter_jobs
 
 
@@ -113,7 +113,7 @@ async def test_max_attempts_exceeded_guard():
     result = await process_job_via_backend(backend, registry, queues=["default"])
     assert result is True
     assert executed == []  # Should NOT have been executed
-    assert await backend.get_job("job-1") is None
+    assert (await backend.get_job("job-1"))["status"] == "dead_letter"
     assert "job-1" in backend._dead_letter_jobs
 
 
@@ -139,7 +139,7 @@ async def test_unregistered_job_dead_letters():
 
     result = await process_job_via_backend(backend, registry, queues=["default"])
     assert result is True
-    assert await backend.get_job("job-orphan") is None
+    assert (await backend.get_job("job-orphan"))["status"] == "dead_letter"
     assert "job-orphan" in backend._dead_letter_jobs
 
 

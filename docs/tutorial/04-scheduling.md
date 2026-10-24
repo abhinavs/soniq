@@ -158,7 +158,7 @@ Recurring jobs need a running scheduler to check for due jobs and enqueue them. 
 soniq scheduler --check-interval 60
 ```
 
-The scheduler checks for due recurring jobs every `--check-interval` seconds (default: 60). When a job is due, it enqueues a new instance into the regular job queue. Workers then pick it up as usual.
+The scheduler checks for due recurring jobs every `--check-interval` seconds (default: 60). If an `every=` schedule is shorter than that, the scheduler checks at that shorter interval instead. When a job is due, it enqueues a new instance into the regular job queue. Workers then pick it up as usual.
 
 Multiple scheduler instances are safe. Soniq elects a single tick leader via a Postgres advisory lock per interval, and the per-job claim runs as an atomic compare-and-swap on `next_run` inside a single transaction with the enqueue: if anyone wins the race, exactly one job lands in the queue.
 

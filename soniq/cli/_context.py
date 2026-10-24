@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 from soniq import Soniq
 
-from ._helpers import load_app, resolve_soniq_instance
+from ._helpers import load_app, redact_url, resolve_soniq_instance
 from .colors import print_status
 
 
@@ -53,7 +53,7 @@ async def cli_app(args: Any) -> AsyncIterator[Soniq]:
     """
     app = await resolve_app(args)
     print_status(
-        f"Using instance-based configuration: {app.settings.database_url}",
+        f"Using instance-based configuration: {redact_url(app.settings.database_url)}",
         "info",
     )
     try:
@@ -131,15 +131,15 @@ async def execution_app(args: Any, modules: List[str]) -> AsyncIterator[Soniq]:
     flag_url = getattr(args, "database_url", None)
     if flag_url and _database_urls_differ(flag_url, discovered.settings.database_url):
         print_status(
-            f"--database-url ({flag_url}) conflicts with the database your job "
-            f"modules' Soniq instance connects to ({discovered.settings.database_url}). "
+            f"--database-url ({redact_url(flag_url)}) conflicts with the database your job "
+            f"modules' Soniq instance connects to ({redact_url(discovered.settings.database_url)}). "
             "A worker/scheduler runs on the job-module instance, so --database-url "
             "can't be applied. Remove the flag, or point it at the same database.",
             "error",
         )
         raise SystemExit(1)
     print_status(
-        f"Using job-module instance: {discovered.settings.database_url}",
+        f"Using job-module instance: {redact_url(discovered.settings.database_url)}",
         "info",
     )
     try:

@@ -746,3 +746,51 @@ async def test_enqueue_many_args_list_not_a_list_raises(app):
 async def test_enqueue_many_invalid_target_type_raises(app):
     with pytest.raises(TypeError, match="must be a callable, string, or TaskRef"):
         await app.enqueue_many(12345, [{}])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_kwargs_that_dont_fit_the_handler(app):
+    from soniq import JobContext
+
+    @app.job(name="billing.fits")
+    async def handler(order_id: int, ctx: JobContext, note: str = ""):
+        pass
+
+    await app.enqueue(handler, order_id=1)  # ctx is injected, not passed
+    for bad in ({"order_id": 1, "typo": 2}, {"note": "x"}):
+        with pytest.raises(SoniqError) as exc:
+            await app.enqueue(handler, **bad)
+        assert exc.value.error_code == SONIQ_TASK_ARGS_INVALID
+
+
+@pytest.mark.asyncio
+async def test_enqueue_accepts_anything_for_var_kwargs_handler(app):
+    @app.job(name="billing.loose")
+    async def handler(**kwargs):
+        pass
+
+    await app.enqueue(handler, whatever=1)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_non_json_args(app):
+    from datetime import datetime
+
+    @app.job(name="billing.when")
+    async def handler(when):
+        pass
+
+    with pytest.raises(SoniqError, match="JSON-serializable"):
+        await app.enqueue(handler, when=datetime.now())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_many_reports_the_bad_index(app):
+    @app.job(name="billing.many_fits")
+    async def handler(n: int):
+        pass
+
+    with pytest.raises(SoniqError) as exc:
+        await app.enqueue_many(handler, [{"n": 1}, {"m": 2}])
+    assert exc.value.context["index"] == 1
+    assert await app.list_jobs() == []

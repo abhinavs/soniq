@@ -157,7 +157,7 @@ async def test_dead_letter():
         reason="max_retries_exceeded",
     )
     # DLQ Option A: row removed from soniq_jobs entirely.
-    assert await backend.get_job(j) is None
+    assert (await backend.get_job(j))["status"] == "dead_letter"
     assert j in backend._dead_letter_jobs
     assert backend._dead_letter_jobs[j]["dead_letter_reason"] == "max_retries_exceeded"
 

@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
+from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
 from soniq.backends.helpers import no_transactional_enqueue
 
 if TYPE_CHECKING:
@@ -295,9 +296,10 @@ class MemoryBackend:
 
     async def get_job(self, job_id: str) -> Optional[dict]:
         job = self._jobs.get(job_id)
-        if not job:
-            return None
-        return self._format_job(job)
+        if job:
+            return self._format_job(job)
+        dl = self._dead_letter_jobs.get(job_id)
+        return _dead_letter_row_to_dict(dl) if dl else None
 
     async def list_jobs(
         self,
