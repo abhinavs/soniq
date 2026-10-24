@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@soniq.job(queue="invoices", retries=5)
+@soniq.job(name="invoices.send_invoice", queue="invoices", retries=5)
 async def send_invoice(order_id: int):
     order = await get_order(order_id)
     await generate_and_send_invoice(order)

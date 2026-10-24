@@ -1,5 +1,6 @@
 """Backend helper utilities."""
 
+import json
 from datetime import datetime
 from typing import Any, NoReturn
 
@@ -17,6 +18,13 @@ def no_transactional_enqueue(backend_name: str) -> NoReturn:
         "real connection pool, so it requires the PostgreSQL backend "
         "(postgresql://...). See docs/guides/transactional-enqueue.md."
     )
+
+
+def to_json(value: Any) -> str:
+    """Encode ``value`` for storage. Plain JSON only, so any language can read
+    it back: objects raise ``TypeError`` and NaN/Infinity raise ``ValueError``
+    instead of being turned into Python-flavoured text."""
+    return json.dumps(value, allow_nan=False)
 
 
 def rows_affected(result: str) -> int:

@@ -9,7 +9,7 @@ If you are an agent generating Soniq code, the most common four mistakes are:
 1. Calling the decorator without parens (`@soniq.job` instead of `@soniq.job()`). Always use parens.
 2. Passing job arguments positionally to `enqueue` (`await soniq.enqueue(send, "a@b.com")`). Job args are keyword-only - use `to="a@b.com"`.
 3. Forgetting `await` on `enqueue` from sync code. Wrap in `asyncio.run(...)` for one-shot scripts.
-4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - anything else is stored as its `str()` with a warning. Return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
+4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - anything else is logged as an error and stored as `None`. Return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
 
 Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brief.
 
@@ -39,6 +39,7 @@ Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brie
 - [Python API: Hooks](api/hooks.md): `@soniq.before_job`, `@soniq.after_job`, `@soniq.on_error` for logging, metrics, tracing.
 - [CLI commands](cli/commands.md): `setup`, `worker`, `scheduler`, `dashboard`, `inspect`, `dead-letter`, `status`, `migrate-status`.
 - [Dead-letter queue](reference/dead-letter.md): how the DLQ works, how to inspect, replay, and purge.
+- [Storage format](reference/storage-format.md): the tables and JSON rules for reading and writing jobs from any language, and the `args_hash` algorithm.
 - [Deprecations](deprecations.md): deprecated names, when they go away, and what to use instead.
 - [Glossary](reference/glossary.md): one-paragraph definitions for the words the docs use (job, handler, task name, worker, scheduler, queue, heartbeat, DLQ, replay, at-least-once, transactional enqueue, backend).
 

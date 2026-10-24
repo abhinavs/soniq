@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
-from soniq.backends.helpers import no_transactional_enqueue
+from soniq.backends.helpers import no_transactional_enqueue, to_json
 from soniq.types import QueueStats
 
 logger = logging.getLogger(__name__)
@@ -203,7 +203,7 @@ class SQLiteBackend:
                     return str(row["id"])
 
         sched = scheduled_at.isoformat() if scheduled_at else None
-        args_serialized = json.dumps(args, default=str)
+        args_serialized = to_json(args)
         await self._conn.execute(
             """
             INSERT INTO soniq_jobs
@@ -299,7 +299,7 @@ class SQLiteBackend:
                     (expires, _now_iso(), job_id),
                 )
             else:
-                result_json = json.dumps(result, default=str)
+                result_json = to_json(result)
                 await self._conn.execute(
                     "UPDATE soniq_jobs SET status='done', result=?, expires_at=?, updated_at=? WHERE id=?",
                     (result_json, expires, _now_iso(), job_id),
@@ -350,7 +350,7 @@ class SQLiteBackend:
             if row is None:
                 return
         now = _now_iso()
-        tags_json = json.dumps(tags) if tags is not None else None
+        tags_json = to_json(tags) if tags is not None else None
         await self._conn.execute(
             """
             INSERT INTO soniq_dead_letter_jobs (

@@ -11,7 +11,7 @@ from soniq import Soniq
 
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@soniq.job()
+@soniq.job(name="users.send_welcome_email")
 async def send_welcome_email(user_id: int, template: str = "default"):
     user = await get_user(user_id)
     await send_email(user.email, template)
@@ -19,7 +19,7 @@ async def send_welcome_email(user_id: int, template: str = "default"):
 
 That is it. The `@soniq.job` decorator registers the function so Soniq knows about it. The function itself is a normal `async def` - you can call it directly in tests, or you can enqueue it as a background job.
 
-By default Soniq derives the *task name* (the string identifier under which the job is registered) from `f"{module}.{qualname}"`. The function above registers as `myapp.tasks.send_welcome_email` - the same convention Celery uses.
+`name=` is the *task name*: the string stored in each job's row and used to find the handler again. Leave it out and Soniq derives one from the module path (`myapp.tasks.send_welcome_email`), but that's deprecated since 0.2.0 and prints a warning. Pick the name yourself.
 
 ## Enqueuing a job
 
@@ -92,9 +92,9 @@ The rest of this page covers features you can come back to later. The basics abo
 
 Always write the parentheses: `@soniq.job()`. The bare form `@soniq.job` is not supported.
 
-### Explicit task names (for cross-service setups)
+### Task names across services
 
-The default module-derived name (`myapp.tasks.send_welcome_email`) is fine inside a single repo. If you have a producer service and a consumer service in different codebases, set the name explicitly so renaming the function does not break the wire protocol:
+An explicit name also means renaming or moving the function doesn't break jobs already in the queue. That matters most when a producer and a consumer live in different codebases:
 
 ```python
 @soniq.job(name="users.send_welcome_email")
@@ -139,7 +139,7 @@ Add a parameter typed as `JobContext` and Soniq injects metadata about the runni
 ```python
 from soniq import JobContext
 
-@soniq.job()
+@soniq.job(name="billing.process_invoice")
 async def process_invoice(invoice_id: str, ctx: JobContext):
     print(f"Job {ctx.job_id}, attempt {ctx.attempt} of {ctx.max_attempts}")
 ```
@@ -157,7 +157,7 @@ class EmailArgs(BaseModel):
     user_id: int
     template: str = "default"
 
-@soniq.job(validate=EmailArgs)
+@soniq.job(name="users.send_welcome_email", validate=EmailArgs)
 async def send_welcome_email(user_id: int, template: str = "default"):
     ...
 

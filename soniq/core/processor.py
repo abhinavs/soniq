@@ -444,17 +444,18 @@ async def _dispatch_and_record(
             return True
 
         # The handler's side effects already happened, so a bad return value
-        # doesn't fail the job. Postgres and SQLite store str() of it instead.
+        # doesn't fail the job. Store no result rather than Python-only text.
         try:
-            json.dumps(job_result)
+            json.dumps(job_result, allow_nan=False)
         except (TypeError, ValueError):
-            logger.warning(
-                "Job %s (%s) returned a %s, which is not JSON-serializable; "
-                "Postgres and SQLite store str() of it as the result",
+            logger.error(
+                "Job %s (%s) returned a %s, which is not plain JSON; "
+                "the job is done but no result is stored",
                 job_id,
                 job_name,
                 type(job_result).__name__,
             )
+            job_result = None
         await backend.mark_job_done(
             job_id, result_ttl=settings.result_ttl, result=job_result
         )

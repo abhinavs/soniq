@@ -11,7 +11,7 @@ from soniq.job import JobContext
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@soniq.job(queue="emails", max_retries=3, retry_delay=[5, 30, 300])
+@soniq.job(name="emails.send_welcome_email", queue="emails", max_retries=3, retry_delay=[5, 30, 300])
 async def send_welcome_email(user_id: int, ctx: JobContext):
     user = await get_user(user_id)
 
@@ -56,7 +56,7 @@ Keep email worker concurrency low to respect rate limits. If your provider allow
 **Escalating with backoff.** For longer retry windows, use `retry_backoff=True` with a base delay:
 
 ```python
-@soniq.job(queue="emails", max_retries=5, retry_delay=10, retry_backoff=True, retry_max_delay=3600)
+@soniq.job(name="emails.send_email_with_backoff", queue="emails", max_retries=5, retry_delay=10, retry_backoff=True, retry_max_delay=3600)
 async def send_email_with_backoff(user_id: int):
     ...
 ```

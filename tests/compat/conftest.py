@@ -111,3 +111,44 @@ def run_until(argv, *, env: dict, cwd, ready, timeout: float = 30):
             proc.send_signal(signal.SIGINT)
             rc = proc.wait(timeout=30)
         return rc, output()
+
+
+def old_venv(cache_dir, version: str):
+    """A virtualenv in ``cache_dir`` with soniq ``version`` from PyPI."""
+    python = cache_dir / "bin" / "python"
+    probe = [str(python), "-c", "import soniq; print(soniq.__version__)"]
+    if python.exists():
+        found = subprocess.run(probe, capture_output=True, text=True, cwd=cache_dir)
+        if found.stdout.strip() == version:
+            return cache_dir
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--clear", str(cache_dir)], check=True
+    )
+    subprocess.run(
+        [str(python), "-m", "pip", "install", "-q", f"soniq=={version}"],
+        check=True,
+        timeout=300,
+    )
+    return cache_dir
+
+
+def fetch(url, query):
+    """Rows for ``query``, from a fresh connection."""
+
+    async def go():
+        conn = await asyncpg.connect(url)
+        try:
+            return await conn.fetch(query)
+        finally:
+            await conn.close()
+
+    return asyncio.run(go())
+
+
+def check(proc, *expect):
+    """Assert ``proc`` succeeded and printed every line in ``expect``."""
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    for line in expect:
+        assert line in out, f"{line!r} missing:\n{out}"
+    return out

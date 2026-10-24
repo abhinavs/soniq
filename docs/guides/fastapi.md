@@ -17,7 +17,7 @@ soniq = Soniq(database_url="postgresql://localhost/myapp")
 app = FastAPI(lifespan=lifespan(soniq, run_worker=True, concurrency=2))
 
 
-@soniq.job(queue="emails", retries=3)
+@soniq.job(name="emails.send_welcome", queue="emails", retries=3)
 async def send_welcome(user_id: int):
     user = await get_user(user_id)
     await send_email(to=user.email, template="welcome")
@@ -127,7 +127,7 @@ With Soniq, the job is a row in PostgreSQL. It survives a restart and it retries
 +soniq = Soniq(database_url="postgresql://localhost/myapp")
 +app = FastAPI(lifespan=lifespan(soniq, run_worker=True))
 
-+@soniq.job(retries=3)
++@soniq.job(name="emails.send_welcome", retries=3)
  async def send_welcome(user_id: int):
      ...
 
@@ -147,7 +147,7 @@ Job arguments are keyword-only and must be JSON-serializable.
 Register jobs with the `@soniq.job()` decorator. Jobs are regular async functions:
 
 ```python
-@soniq.job(queue="emails", retries=3)
+@soniq.job(name="emails.send_welcome", queue="emails", retries=3)
 async def send_welcome(user_id: int):
     user = await get_user(user_id)
     await send_email(to=user.email, template="welcome")

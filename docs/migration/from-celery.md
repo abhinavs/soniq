@@ -67,11 +67,11 @@ def process_payment(self, order_id):
 
 ```python
 # after
-@soniq.job()
+@soniq.job(name="emails.send_email")
 async def send_email(to: str, subject: str):
     ...
 
-@soniq.job(retries=5, queue="urgent", retry_delay=30)
+@soniq.job(name="payments.process_payment", retries=5, queue="urgent", retry_delay=30)
 async def process_payment(order_id: int):
     # Just raise. Soniq retries by default.
     ...
@@ -102,7 +102,7 @@ def fetch(url):
     return requests.get(url).json()
 
 # Soniq
-@soniq.job(retries=5, retry_backoff=True, retry_delay=1, retry_max_delay=60)
+@soniq.job(name="jobs.fetch", retries=5, retry_backoff=True, retry_delay=1, retry_max_delay=60)
 async def fetch(url: str):
     async with httpx.AsyncClient() as client:
         return (await client.get(url)).json()

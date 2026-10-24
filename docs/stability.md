@@ -20,6 +20,8 @@ Upgrading within 0.x never needs a code change unless the changelog lists a depr
 
 Every change to the database schema is a numbered migration in `soniq/backends/postgres/migrations/`. Run `soniq setup` on deploy and it applies pending migrations. Upgrading never needs a manual SQL step. Use `soniq migrate-status` to see what is applied and what is pending.
 
+What goes into the rows is specified separately, in [Storage format](reference/storage-format.md). Changes to it follow the same rules as the API.
+
 ## Supported versions
 
 | Component  | Supported                                      |

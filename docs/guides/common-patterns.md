@@ -42,7 +42,7 @@ Job functions can receive runtime metadata by adding a `ctx: JobContext` paramet
 ```python
 from soniq.job import JobContext
 
-@soniq.job(queue="default")
+@soniq.job(name="orders.process_order", queue="default")
 async def process_order(order_id: int, ctx: JobContext):
     print(f"Job {ctx.job_id}, attempt {ctx.attempt} of {ctx.max_attempts}")
     print(f"Queue: {ctx.queue}, Worker: {ctx.worker_id}")
@@ -72,7 +72,7 @@ Prevent duplicate jobs with `unique=True` or a custom `dedup_key`.
 With `unique=True`, Soniq hashes the job arguments. If a job with the same name and arguments already exists in a non-terminal state, the enqueue is a no-op:
 
 ```python
-@soniq.job(unique=True)
+@soniq.job(name="users.sync_user", unique=True)
 async def sync_user(user_id: int):
     ...
 
@@ -105,7 +105,7 @@ This lets you deduplicate across different argument combinations or use business
 Job functions can return values. Retrieve them after the job completes:
 
 ```python
-@soniq.job()
+@soniq.job(name="jobs.add")
 async def add(a: int, b: int):
     return a + b
 
@@ -132,7 +132,7 @@ For scripts, migrations, or one-off tasks, use the async context manager to hand
 
 ```python
 async with Soniq(database_url="postgresql://localhost/myapp") as soniq:
-    @soniq.job()
+    @soniq.job(name="jobs.my_task")
     async def my_task(value: str):
         print(value)
 

@@ -4,6 +4,35 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - Unreleased
+
+The first step towards rows that any language can read and write. See the new [Storage format](docs/reference/storage-format.md) page.
+
+### Upgrading from 0.1.0
+
+No schema change is needed. Rows written by 0.1.0 are still processed, and 0.1.0 workers can run rows written by 0.2.0, so a rolling deploy or a rollback is safe. Three behavior changes may need a look:
+
+- A handler that returns something that isn't JSON (a `datetime`, a Pydantic model) used to have its `str()` stored as the result. Now the job still completes, the worker logs an error, and the stored result is `None`.
+- `enqueue` rejects `NaN`, `Infinity` and `-Infinity` with `SONIQ_TASK_ARGS_INVALID`. They used to get past the check and fail inside the database driver.
+- `@soniq.job()` without `name=` warns. See Deprecations.
+
+### Deprecations
+
+- **Job names derived from the module path.** `@soniq.job()` with no `name=` still registers as `module.function`, but warns and goes away in 1.0. Set `name=` to the name the warning prints, so jobs already queued under it still find their handler.
+
+### Changed
+
+- Soniq writes plain JSON only. The encoders no longer turn unknown objects into strings, and `NaN` is rejected instead of written.
+- The docs and examples pass `name=` to every job.
+
+### Fixed
+
+- Dead-letter `tags` passed to the Postgres backend were encoded twice and stored as a JSON string instead of an object.
+
+### Added
+
+- **Storage format page** with the tables, the JSON rules and the exact `args_hash` algorithm, including a test vector.
+
 ## [0.1.0] - 2026-10-24
 
 ### Upgrading from 0.0.5

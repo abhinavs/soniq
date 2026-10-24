@@ -90,7 +90,7 @@ from soniq.testing import wait_until
 
 @pytest.mark.asyncio
 async def test_worker_completes_job(soniq):
-    @soniq.job()
+    @soniq.job(name="jobs.do_thing")
     async def do_thing():
         return "done"
 
@@ -115,7 +115,7 @@ Every test that accepts `soniq` gets its own queue with no leftover state from p
 Job functions are regular async functions. Call them without enqueuing:
 
 ```python
-@soniq.job(queue="emails")
+@soniq.job(name="emails.send_welcome", queue="emails")
 async def send_welcome(to: str):
     return f"sent to {to}"
 
@@ -134,7 +134,7 @@ Use `run_worker(run_once=True)` to drain the queue synchronously in your test:
 async def test_round_trip(soniq):
     results = []
 
-    @soniq.job(queue="default")
+    @soniq.job(name="jobs.track_call", queue="default")
     async def track_call(value: str):
         results.append(value)
 
@@ -150,7 +150,7 @@ async def test_round_trip(soniq):
 
 ```python
 async def test_job_status(soniq):
-    @soniq.job()
+    @soniq.job(name="jobs.noop")
     async def noop():
         pass
 
@@ -167,7 +167,7 @@ Enqueue a job that raises, then call `run_worker(run_once=True)` multiple times:
 async def test_retry_behavior(soniq):
     attempts = []
 
-    @soniq.job(max_retries=2, retry_delay=0)
+    @soniq.job(name="jobs.flaky_job", max_retries=2, retry_delay=0)
     async def flaky_job():
         attempts.append(1)
         if len(attempts) < 3:
@@ -188,7 +188,7 @@ Jobs that exhaust retries land in the dead-letter table, not in
 
 ```python
 async def test_failure_tracking(soniq):
-    @soniq.job(max_retries=0)
+    @soniq.job(name="jobs.always_fails", max_retries=0)
     async def always_fails():
         raise ValueError("boom")
 

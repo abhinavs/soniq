@@ -75,7 +75,7 @@ Soniq registers jobs explicitly via a decorator:
 
 ```python
 # myapp/jobs.py
-@soniq.job()
+@soniq.job(name="emails.send_email")
 async def send_email(to: str, subject: str):
     ...
 
@@ -111,12 +111,12 @@ The keyword-only style means there's never ambiguity between framework options (
 RQ handlers are sync. Soniq prefers async, but supports both:
 
 ```python
-@soniq.job()
+@soniq.job(name="jobs.fetch_async")
 async def fetch_async(url: str):
     async with httpx.AsyncClient() as client:
         return (await client.get(url)).text
 
-@soniq.job()
+@soniq.job(name="jobs.fetch_sync")
 def fetch_sync(url: str):
     return requests.get(url).text   # runs on a bounded thread pool
 ```
@@ -135,7 +135,7 @@ q.enqueue(fetch, url, retry=Retry(max=3, interval=[10, 30, 60]))
 Soniq retries are a property of the job, set on the decorator:
 
 ```python
-@soniq.job(retries=3, retry_delay=[10, 30, 60])
+@soniq.job(name="jobs.fetch", retries=3, retry_delay=[10, 30, 60])
 async def fetch(url: str):
     ...
 ```

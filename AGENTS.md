@@ -22,12 +22,12 @@ from soniq import Soniq
 
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@soniq.job()
+@soniq.job(name="emails.send_email")
 async def send_email(to: str, subject: str, body: str):
     ...
 ```
 
-Always use parens: `@soniq.job()`, never `@soniq.job`. The bare form is not supported.
+Always use parens: `@soniq.job()`, never `@soniq.job`. The bare form is not supported. Always pass `name=` too: a name derived from the module path is deprecated since 0.2.0 and warns.
 
 Decorator kwargs (all optional): `name=`, `retries=`, `priority=`, `queue=`, `unique=`, `retry_delay=`, `retry_backoff=`, `retry_max_delay=`, `timeout=`, `validate=`. See `docs/api/jobs.md`.
 
@@ -150,16 +150,16 @@ def main():
 
 ### 4. Returning non-JSON values from a handler
 
-Soniq stores results in `soniq_jobs.result` (`JSONB`). Return values must be JSON-serialisable. Anything else is stored as its `str()` and the worker logs a warning, so the job still completes but the caller gets a string back.
+Soniq stores results in `soniq_jobs.result` (`JSONB`). Return values must be JSON-serialisable. Anything else is dropped: the job still completes, the worker logs an error, and the stored result is `None`.
 
 ```python
 # WRONG
-@soniq.job()
+@soniq.job(name="users.fetch_user")
 async def fetch_user(user_id: int) -> User:
-    return await User.get(user_id)        # Pydantic model, datetimes, UUIDs - stored as str()
+    return await User.get(user_id)        # Pydantic model, datetimes, UUIDs - result stored as None
 
 # RIGHT
-@soniq.job()
+@soniq.job(name="users.fetch_user")
 async def fetch_user(user_id: int) -> dict:
     user = await User.get(user_id)
     return user.model_dump(mode="json")    # or persist to DB and return {"user_id": user.id}
