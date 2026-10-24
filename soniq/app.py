@@ -73,7 +73,10 @@ logger = logging.getLogger(__name__)
 
 
 def _check_job_args(
-    job_name: str, job_meta: Optional[dict], args: dict, check_signature: bool
+    job_name: str,
+    job_meta: Optional[dict[str, Any]],
+    args: dict[str, Any],
+    check_signature: bool,
 ) -> None:
     """Reject args the worker could never run, at enqueue time.
 
