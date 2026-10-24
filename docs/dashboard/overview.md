@@ -7,11 +7,13 @@ directly for operational monitoring.
 
 ## What you can see
 
-- **Queue overview** -- job counts by status (queued, processing, done, dead-letter, cancelled) for each queue.
-- **Worker status** -- active workers, their concurrency, uptime, last heartbeat, and resource usage.
-- **Job inspection** -- search, filter, and view individual job details including arguments, result, error messages, and attempt history.
-- **Dead-letter queue** -- browse failed jobs, inspect errors, and (in write mode) retry or delete them.
-- **Metrics** -- job throughput timeline, per-job-type statistics, and system health.
+- **Overview** - where your jobs are right now (queued, running, done, failed, cancelled), a 24-hour chart of finished jobs, and a warning when the database has job names your code doesn't register.
+- **Jobs** - search by name or error, filter by status and queue, and open any job to see its arguments, result and last error.
+- **Failed** - jobs that ran out of retries, with their tracebacks. In write mode you can replay them.
+- **Queues and job types** - counts, success rates and average run time.
+- **Workers** - each worker's host, concurrency and last heartbeat, marked online, stopped or not responding.
+
+The page has light and dark themes, refreshes itself every 10 seconds while the tab is visible, and works on a phone. Press `/` to search.
 
 
 ## Setup
@@ -47,6 +49,7 @@ export SONIQ_DASHBOARD_API_KEY="$(openssl rand -hex 32)"
 
 Write mode needs both variables. Once the key is set, every request (reads too)
 must send it in the `X-API-Key` header or the `?api_key=` query parameter.
+The page asks for the key the first time and keeps it for the browser tab.
 There is no localhost exemption, because a reverse proxy on the same host
 looks exactly like a local caller.
 
@@ -101,18 +104,27 @@ the source of truth if this table drifts.
 |---|---|---|
 | `GET` | `/` | HTML dashboard page. |
 | `GET` | `/api/stats` | Aggregate job counts by status. Returns `dict[str, int]`. |
-| `GET` | `/api/jobs?status=...&queue=...&limit=...&offset=...` | Recent jobs with optional filters. Returns `list[dict]`. |
+| `GET` | `/api/jobs?queue=...&limit=...` | Most recent jobs, optionally for one queue. Returns `list[dict]`. |
 | `GET` | `/api/jobs/{job_id}` | Single job details. Returns `dict`. |
 | `GET` | `/api/queues` | Per-queue statistics. Returns `list[dict]`. |
-| `GET` | `/api/metrics?hours=24` | Job metrics for the given time range. Returns `dict`. |
-| `GET` | `/api/workers/stats` | Worker status and health. Returns `dict`. |
-| `GET` | `/api/jobs/timeline?hours=24` | Job throughput timeline. Returns `list[dict]`. |
+| `GET` | `/api/metrics?hours=24` | Finished jobs in the window. See [Metrics](#metrics). Returns `dict`. |
+| `GET` | `/api/workers` | Registered workers with their last heartbeat. Returns `list[dict]`. |
+| `GET` | `/api/workers/stats` | Worker counts by status. Returns `dict`. |
+| `GET` | `/api/jobs/timeline?hours=24` | Jobs per UTC hour: enqueued, completed and dead-lettered. Returns `list[dict]`. |
 | `GET` | `/api/jobs/types` | Per-job-type statistics. Returns `list[dict]`. |
-| `GET` | `/api/jobs/search?q=...&status=...&queue=...` | Search jobs by name, status, or queue. Returns `list[dict]`. |
+| `GET` | `/api/jobs/search?query=...&status=...&queue=...&limit=...&offset=...` | Search jobs by name or error text, with filters and paging. Returns `{"jobs": [...], "total_count": n, "has_more": bool, ...}`. |
+| `GET` | `/api/dead-letter?limit=...&offset=...` | Dead-letter jobs, newest first. Returns `dict`. |
 | `GET` | `/api/system/health` | System health check. Returns `dict`. |
 | `GET` | `/api/tasks/drift` | Tasks registered on the running app vs. tasks observed in the DB. |
 | `GET` | `/api/panels` | Available dashboard panels. |
 | `GET` | `/api/panels/{panel_id}` | Single panel descriptor. |
+
+### Metrics
+
+A job counts once it has finished: it is either `done` in `soniq_jobs` or it was
+moved to the dead-letter table. Queued, running and cancelled jobs don't count.
+The success rate is done jobs divided by finished jobs, and a retry that later
+succeeds counts as a success. Job types use the same rule over all time.
 
 ### Write endpoints
 

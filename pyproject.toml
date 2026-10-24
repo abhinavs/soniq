@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soniq"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 description = "Background jobs for Python. Powered by the Postgres you already have. Nothing else to maintain."
 authors = [{ name = "Abhinav Saxena", email = "abhinav@apiclabs.com" }]
 readme = "README.md"
@@ -96,7 +96,7 @@ include = ["soniq*"]
 exclude = ["tests*", "deployment*"]
 
 [tool.setuptools.package-data]
-soniq = ["py.typed"]
+soniq = ["py.typed", "dashboard/index.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -7,7 +7,7 @@ bound to the configured ``Soniq`` and calls methods on it.
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -136,40 +136,39 @@ class DashboardService:
             return results
 
     async def get_job_metrics(self, hours: int = 24) -> Dict[str, Any]:
+        # A job counts as processed once it finishes: done in soniq_jobs, or
+        # moved to the dead-letter table. Queued and running rows don't count.
         async with self._acquire() as conn:
-            since = datetime.now() - timedelta(hours=hours)
             metrics = await conn.fetchrow(
                 """
                 SELECT
-                    COUNT(*) as total_processed,
-                    COUNT(*) FILTER (WHERE status = 'done') as successful,
+                    COUNT(*) as successful,
                     AVG(GREATEST(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000, 0))
-                        FILTER (WHERE status = 'done') as avg_processing_time_ms,
-                    COUNT(*) / GREATEST($2, 1) as jobs_per_hour
+                        as avg_processing_time_ms
                 FROM soniq_jobs
-                WHERE updated_at >= $1
+                WHERE status = 'done' AND updated_at >= NOW() - make_interval(hours => $1)
                 """,
-                since,
                 hours,
             )
             dead_lettered = await conn.fetchval(
-                "SELECT COUNT(*) FROM soniq_dead_letter_jobs WHERE moved_to_dead_letter_at >= $1",
-                since,
+                """
+                SELECT COUNT(*) FROM soniq_dead_letter_jobs
+                WHERE moved_to_dead_letter_at >= NOW() - make_interval(hours => $1)
+                """,
+                hours,
             )
-            success_rate = 0.0
-            if metrics["total_processed"] > 0:
-                success_rate = (
-                    metrics["successful"] / metrics["total_processed"]
-                ) * 100
+            successful = int(metrics["successful"] or 0)
+            dead_lettered = int(dead_lettered or 0)
+            total = successful + dead_lettered
             return {
-                "total_processed": metrics["total_processed"],
-                "successful": metrics["successful"],
-                "dead_lettered": int(dead_lettered or 0),
-                "success_rate": round(success_rate, 2),
+                "total_processed": total,
+                "successful": successful,
+                "dead_lettered": dead_lettered,
+                "success_rate": round(successful / total * 100, 2) if total else 0.0,
                 "avg_processing_time_ms": round(
-                    metrics["avg_processing_time_ms"] or 0, 2
+                    float(metrics["avg_processing_time_ms"] or 0), 2
                 ),
-                "jobs_per_hour": round(metrics["jobs_per_hour"] or 0, 2),
+                "jobs_per_hour": round(total / max(hours, 1), 2),
                 "time_window_hours": hours,
             }
 
@@ -261,41 +260,40 @@ class DashboardService:
             }
 
     async def get_job_timeline(self, hours: int = 24) -> List[Dict[str, Any]]:
+        # total_jobs counts jobs by the hour they were enqueued. completed and
+        # dead_letter count them by the hour they finished.
         async with self._acquire() as conn:
-            since = datetime.now() - timedelta(hours=hours)
-            timeline = await conn.fetch(
+            rows = await conn.fetch(
                 """
-                SELECT
-                    DATE_TRUNC('hour', created_at) as hour,
-                    COUNT(*) as total_jobs,
-                    COUNT(*) FILTER (WHERE status = 'done') as completed
-                FROM soniq_jobs
-                WHERE created_at >= $1
-                GROUP BY DATE_TRUNC('hour', created_at)
+                SELECT hour,
+                       SUM(enqueued) as total_jobs,
+                       SUM(done) as completed,
+                       SUM(dead) as dead_letter
+                FROM (
+                    SELECT DATE_TRUNC('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' as hour, 1 as enqueued, 0 as done, 0 as dead
+                    FROM soniq_jobs WHERE created_at >= NOW() - make_interval(hours => $1)
+                    UNION ALL
+                    SELECT DATE_TRUNC('hour', updated_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 0, 1, 0
+                    FROM soniq_jobs
+                    WHERE status = 'done' AND updated_at >= NOW() - make_interval(hours => $1)
+                    UNION ALL
+                    SELECT DATE_TRUNC('hour', moved_to_dead_letter_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 0, 0, 1
+                    FROM soniq_dead_letter_jobs
+                    WHERE moved_to_dead_letter_at >= NOW() - make_interval(hours => $1)
+                ) t
+                GROUP BY hour
                 ORDER BY hour ASC
                 """,
-                since,
+                hours,
             )
-            dlq_buckets = await conn.fetch(
-                """
-                SELECT
-                    DATE_TRUNC('hour', moved_to_dead_letter_at) as hour,
-                    COUNT(*) as dead_letter
-                FROM soniq_dead_letter_jobs
-                WHERE moved_to_dead_letter_at >= $1
-                GROUP BY DATE_TRUNC('hour', moved_to_dead_letter_at)
-                """,
-                since,
-            )
-            dlq_by_hour = {r["hour"]: int(r["dead_letter"]) for r in dlq_buckets}
             return [
                 {
                     "hour": row["hour"].isoformat(),
-                    "total_jobs": row["total_jobs"],
-                    "completed": row["completed"],
-                    "dead_letter": dlq_by_hour.get(row["hour"], 0),
+                    "total_jobs": int(row["total_jobs"]),
+                    "completed": int(row["completed"]),
+                    "dead_letter": int(row["dead_letter"]),
                 }
-                for row in timeline
+                for row in rows
             ]
 
     async def get_job_types_stats(self) -> List[Dict[str, Any]]:
@@ -326,6 +324,11 @@ class DashboardService:
                 """
             )
             dlq_by_name = {r["job_name"]: int(r["dead_letter_count"]) for r in dlq_rows}
+
+            def success_rate(done: int, failed: int) -> float:
+                # Out of finished jobs only, so queued work doesn't drag it down.
+                return round(done / (done + failed) * 100, 2) if done + failed else 0.0
+
             return [
                 {
                     "job_name": row["job_name"],
@@ -333,13 +336,11 @@ class DashboardService:
                     "completed_count": row["completed_count"],
                     "dead_letter_count": dlq_by_name.get(row["job_name"], 0),
                     "queued_count": row["queued_count"],
-                    "success_rate": (
-                        round((row["completed_count"] / row["total_count"]) * 100, 2)
-                        if row["total_count"] > 0
-                        else 0
+                    "success_rate": success_rate(
+                        row["completed_count"], dlq_by_name.get(row["job_name"], 0)
                     ),
                     "avg_processing_time_ms": round(
-                        row["avg_processing_time_ms"] or 0, 2
+                        float(row["avg_processing_time_ms"] or 0), 2
                     ),
                     "last_run": (
                         row["last_run"].isoformat() if row["last_run"] else None
@@ -513,3 +514,42 @@ class DashboardService:
                     for r in rows
                 ],
             }
+
+    async def get_dead_letter_jobs(
+        self, limit: int = 50, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Newest dead-letter rows first, with the total for paging."""
+        async with self._acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM soniq_dead_letter_jobs")
+            rows = await conn.fetch(
+                """
+                SELECT id, job_name, args, queue, attempts, max_attempts,
+                       last_error, dead_letter_reason, original_created_at,
+                       moved_to_dead_letter_at, resurrection_count, tags
+                FROM soniq_dead_letter_jobs
+                ORDER BY moved_to_dead_letter_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return {
+                "jobs": [dict(row) for row in rows],
+                "total_count": int(total or 0),
+                "limit": limit,
+                "offset": offset,
+            }
+
+    async def get_workers(self) -> List[Dict[str, Any]]:
+        """Rows from soniq_workers, most recent heartbeat first."""
+        async with self._acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, hostname, pid, queues, concurrency, status,
+                       last_heartbeat, started_at, version
+                FROM soniq_workers
+                ORDER BY last_heartbeat DESC
+                LIMIT 200
+                """
+            )
+            return [dict(row) for row in rows]

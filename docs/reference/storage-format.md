@@ -44,6 +44,7 @@ One row per job.
 | `last_error` | `text` | The last error, as text for people to read. |
 | `result` | `jsonb` | The handler's return value. Set by the worker. |
 | `producer_id` | `text` | Free-form name of whoever enqueued the job. |
+| `worker_id` | `uuid` | The worker running it, from `soniq_workers`. Set by the worker. Leave it `NULL`. |
 | `created_at`, `updated_at` | `timestamptz` | Bookkeeping. Let them default. |
 
 Every timestamp column is `timestamp with time zone`. Write times with an explicit offset, or use `NOW()`.
@@ -84,7 +85,17 @@ Periodic schedules. The scheduler reads these and inserts a `soniq_jobs` row eac
 | `job_kwargs` | `jsonb` | The `args` each run gets, as a JSON object. |
 | `status` | `text` | `active` or `paused`. |
 | `queue`, `priority`, `max_attempts` | | Copied onto every job it creates. |
-| `next_run`, `last_run`, `run_count`, `last_job_id` | | Kept up to date by the scheduler. |
+| `id` | `uuid` | Required, with no default. Generate one. |
+| `next_run`, `last_run`, `run_count`, `last_job_id` | | Kept up to date by the scheduler. Leave `next_run` `NULL` and the scheduler works it out. |
+
+To add a schedule from SQL:
+
+```sql
+INSERT INTO soniq_recurring_jobs (id, job_name, schedule_type, schedule_value, job_kwargs)
+VALUES (gen_random_uuid(), 'reports.daily', 'cron', '0 9 * * *', '{}');
+```
+
+Keep one row per `job_name`: the scheduler keys schedules by it. It reads the table when it starts, so restart `soniq scheduler` to pick up a row you inserted. Schedules defined in code (`@soniq.periodic`) are rewritten from code, so don't hand-edit those rows.
 
 ## Job names
 
@@ -105,14 +116,18 @@ Unique jobs (`unique_job = true`) carry a hash of their `args`. A partial unique
 
 1. Serialize `args` as JSON with keys sorted at every level.
 2. Use `,` and `:` as separators, with no spaces.
-3. Escape every non-ASCII character as `\uXXXX`, using surrogate pairs above U+FFFF. This is Python's `json.dumps` default.
+3. Escape strings the way Python's `json.dumps` does by default:
+   - `"`, `\`, newline, carriage return, tab, backspace and form feed use their short forms (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`).
+   - Every other character below U+0020, and U+007F, becomes `\u00XX` in lowercase hex, so DEL is `\u007f`.
+   - Every non-ASCII character becomes `\uXXXX` in lowercase hex, with surrogate pairs above U+FFFF. `é` is `\u00e9` and `😀` is `\ud83d\ude00`.
+   - `/` is not escaped.
 4. Take the SHA-256 of the UTF-8 bytes and write it as lowercase hex.
 
 Test vector:
 
 ```text
 args:      {"to": "zoë@example.com", "order_id": 42, "tags": ["a", "b"]}
-canonical: {"order_id":42,"tags":["a","b"],"to":"zoë@example.com"}
+canonical: {"order_id":42,"tags":["a","b"],"to":"zo\u00eb@example.com"}
 args_hash: 4679a46d38de4bf4d70793166c09d90fb32fa2f36cac5f9193000b4e17bc2c9c
 ```
 

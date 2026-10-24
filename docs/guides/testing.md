@@ -184,18 +184,19 @@ async def test_retry_behavior(soniq):
 ## Testing failed jobs
 
 Jobs that exhaust retries land in the dead-letter table, not in
-`soniq_jobs`. Inspect them through `soniq.dead_letter`:
+`soniq_jobs`. Inspect them through `soniq.dead_letter`. The dead-letter table
+lives in PostgreSQL, so use the `soniq_pg` fixture:
 
 ```python
-async def test_failure_tracking(soniq):
-    @soniq.job(name="jobs.always_fails", max_retries=0)
+async def test_failure_tracking(soniq_pg):
+    @soniq_pg.job(name="jobs.always_fails", retries=0)
     async def always_fails():
         raise ValueError("boom")
 
-    await soniq.enqueue(always_fails)
-    await soniq.run_worker(run_once=True)
+    await soniq_pg.enqueue(always_fails)
+    await soniq_pg.run_worker(run_once=True)
 
-    dead = await soniq.dead_letter.list_dead_letter_jobs()
+    dead = await soniq_pg.dead_letter.list_dead_letter_jobs()
     assert len(dead) == 1
 ```
 

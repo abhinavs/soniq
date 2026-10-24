@@ -29,10 +29,16 @@ No schema change is needed. Rows written by 0.1.0 are still processed, and 0.1.0
 
 - A `ctx: JobContext` parameter now works in modules that use `from __future__ import annotations`. Before, the annotation was a string, so the worker never passed the context and `enqueue` rejected the job with "missing a required argument: 'ctx'".
 - Dead-letter `tags` passed to the Postgres backend were encoded twice and stored as a JSON string instead of an object.
+- Dashboard metrics counted queued and cancelled jobs as processed and left dead-lettered jobs out. Now only finished jobs count, and failures are the jobs that reached the dead-letter table. Job types use the same rule.
+- The dashboard chart counted completions in the hour a job was enqueued and dropped hours with only failures. It now buckets each event by when it happened, in whole UTC hours.
+- The dashboard works when mounted under a path, sends the API key it was given, and escapes job names and errors it shows.
+- The testing guide's dead-letter example used the memory fixture and `max_retries=`. It uses `soniq_pg` and `retries=`.
 
 ### Added
 
 - **Storage format page** with the tables, the JSON rules and the exact `args_hash` algorithm, including a test vector.
+- **A new dashboard.** Overview, jobs, failed jobs, queues, job types and workers, with light and dark themes, live refresh and a phone layout. Replay, cancel and delete still need write mode.
+- Dashboard endpoints `GET /api/dead-letter` and `GET /api/workers`.
 
 ## [0.1.0] - 2026-10-24
 
