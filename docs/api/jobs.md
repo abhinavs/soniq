@@ -10,11 +10,11 @@ Registers a function as a job. Always called with parentheses, even with no kwar
 ```python
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@soniq.job()
+@soniq.job(name="emails.send_email")
 async def send_email(to: str, subject: str, body: str):
     ...
 
-@soniq.job(retries=5, queue="urgent")
+@soniq.job(name="emails.send_password_reset", retries=5, queue="urgent")
 async def send_password_reset(to: str, token: str):
     ...
 ```
@@ -25,7 +25,7 @@ All parameters are optional.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `name` | `str \| None` | `None` | Explicit task name. When omitted, derived from `f"{module}.{qualname}"` (Celery-style). Pass an explicit value for cross-service deployments where the name is a wire-protocol identifier. |
+| `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. When omitted, it is derived from `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
 | `retries` | `int` | `3` | Maximum retry attempts on failure. Alias: `max_retries`. |
 | `priority` | `int` | `100` | Lower number = higher priority. Range: 1--1000. |
 | `queue` | `str` | `"default"` | Queue name for this job. |
@@ -38,6 +38,7 @@ All parameters are optional.
 
 ```python
 @soniq.job(
+    name="payments.process_payment",
     retries=5,
     priority=10,
     queue="urgent",
@@ -115,7 +116,7 @@ The decorator adds two methods to the job function: `.enqueue()` and `.options()
 ```python
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
-@soniq.job()
+@soniq.job(name="emails.send_welcome")
 async def send_welcome(to: str) -> None:
     ...
 
@@ -274,7 +275,7 @@ type annotation `JobContext` and Soniq fills it in automatically.
 ```python
 from soniq import JobContext
 
-@soniq.job()
+@soniq.job(name="orders.process_order")
 async def process_order(order_id: int, ctx: JobContext):
     print(f"Job {ctx.job_id}, attempt {ctx.attempt} of {ctx.max_attempts}")
 ```

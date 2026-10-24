@@ -12,6 +12,7 @@ import asyncpg
 
 from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
 from soniq.backends.helpers import rows_affected as _rows_affected
+from soniq.backends.helpers import to_json
 from soniq.settings import get_settings
 from soniq.types import QueueStats
 
@@ -25,7 +26,7 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.execute("SET timezone = 'UTC'")
     await conn.set_type_codec(
         "jsonb",
-        encoder=lambda v: json.dumps(v, default=str),
+        encoder=to_json,
         decoder=json.loads,
         schema="pg_catalog",
     )
@@ -231,7 +232,7 @@ class PostgresBackend:
         # Send args as JSON text with an explicit cast. The connection may come
         # from the caller (their own pool, an ORM session) without Soniq's JSONB
         # codec, so this must not depend on the codec. Same encoding as the codec.
-        args_json = json.dumps(args, default=str)
+        args_json = to_json(args)
 
         # ON CONFLICT DO UPDATE SET (no-op) RETURNING id fires for the existing row too,
         # so the returned id is always a real row - no caller-id can leak through a race window.
@@ -341,7 +342,7 @@ class PostgresBackend:
     ) -> Optional[str]:
         """Same inserts as ``_create_job_on_conn`` for a psycopg 3 AsyncConnection."""
         uid = uuid.UUID(job_id)
-        args_json = json.dumps(args, default=str)
+        args_json = to_json(args)
         cols = (
             "id, job_name, args, args_hash, max_attempts, priority, queue, unique_job"
         )
@@ -633,7 +634,6 @@ class PostgresBackend:
         # DLQ Option A: move source row to soniq_dead_letter_jobs in one transaction.
         # SELECT FOR UPDATE prevents concurrent cancel/recovery from racing with the move.
         uid = uuid.UUID(job_id)
-        tags_json = json.dumps(tags) if tags is not None else None
         async with self.acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
@@ -664,7 +664,7 @@ class PostgresBackend:
                     error,
                     reason,
                     row["created_at"],
-                    tags_json,
+                    tags,
                 )
                 await conn.execute(
                     "DELETE FROM soniq_jobs WHERE id = $1",

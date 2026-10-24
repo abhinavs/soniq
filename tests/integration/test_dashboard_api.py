@@ -45,6 +45,8 @@ _EXPECTED_ROUTES = {
     "/api/tasks/drift",
     "/api/panels",
     "/api/panels/{panel_id}",
+    "/api/dead-letter",
+    "/api/workers",
 }
 
 

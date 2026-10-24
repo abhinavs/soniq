@@ -25,6 +25,7 @@ from typing import (
 import asyncpg
 from pydantic import ValidationError
 
+from ._deprecation import warn_deprecated
 from .backends import StorageBackend
 from .backends.helpers import no_transactional_enqueue
 from .backends.postgres import PostgresBackend
@@ -46,7 +47,7 @@ from .features.logging import LogService
 from .features.scheduler import Scheduler, _coerce_schedule
 from .features.signing import SigningService
 from .features.webhooks import HTTPTransport, WebhookService
-from .job import JobContext
+from .job import context_param
 from .observability.metrics import DEFAULT_METRICS_SINK
 from .plugin import (
     PluginCLI,
@@ -86,7 +87,7 @@ def _check_job_args(
     the handler's signature, so a typo fails now instead of on every retry.
     """
     try:
-        json.dumps(args)
+        json.dumps(args, allow_nan=False)
     except (TypeError, ValueError) as e:
         raise SoniqError(
             f"Arguments for task {job_name!r} must be JSON-serializable: {e}",
@@ -99,9 +100,11 @@ def _check_job_args(
         ) from e
     if not check_signature or job_meta is None or job_meta.get("args_model"):
         return
-    sig = inspect.signature(job_meta["func"])
+    func = job_meta["func"]
+    sig = inspect.signature(func)
     # The worker injects JobContext itself, so callers never pass it.
-    params = [p for p in sig.parameters.values() if p.annotation is not JobContext]
+    ctx_name = context_param(func)
+    params = [p for p in sig.parameters.values() if p.name != ctx_name]
     try:
         sig.replace(parameters=params).bind(**args)
     except TypeError as e:
@@ -407,6 +410,17 @@ class Soniq:
                 _soniq=self,
                 **kwargs,
             )
+            if kwargs.get("name") is None:
+                # The derived name is a Python module path, which only Python
+                # code can produce. Rows should carry a name any language can.
+                derived: str = getattr(wrapper, "_soniq_name")
+                warn_deprecated(
+                    f"Deriving the job name {derived!r} from the module path",
+                    since="0.2.0",
+                    removed_in="1.0",
+                    use_instead=f"@soniq.job(name={derived!r})",
+                    stacklevel=3,
+                )
             # Typing only: the runtime object is the plain wrapper function.
             return wrapper  # type: ignore[return-value]
 

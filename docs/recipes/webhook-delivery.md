@@ -15,7 +15,7 @@ from soniq.job import JobContext
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@soniq.job(queue="webhooks", max_retries=5, retry_delay=[1, 5, 30, 120, 600])
+@soniq.job(name="webhooks.deliver_webhook", queue="webhooks", max_retries=5, retry_delay=[1, 5, 30, 120, 600])
 async def deliver_webhook(
     url: str,
     event: str,

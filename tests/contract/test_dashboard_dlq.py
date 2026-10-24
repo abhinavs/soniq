@@ -114,3 +114,35 @@ async def test_replay_dead_letter_creates_new_queued_job_and_preserves_dlq_row(a
     assert new_row is not None and new_row["status"] == "queued"
     assert dlq_row is not None, "DLQ row must be preserved as audit trail"
     assert dlq_row["resurrection_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_metrics_and_timeline_count_finished_jobs_only(app):
+    """Queued and cancelled rows don't count as processed. Dead-lettered
+    jobs count as failures, and every finished job lands in the timeline."""
+    pool = await app._get_pool()
+    async with pool.acquire() as conn:
+        for status in ("done", "done", "done", "queued", "cancelled"):
+            await conn.execute(
+                "INSERT INTO soniq_jobs (id, job_name, args, status) "
+                "VALUES ($1, 'test.metrics', '{}', $2)",
+                uuid.uuid4(),
+                status,
+            )
+    await _seed_dlq_row(app)
+
+    data = DashboardService(app)
+    metrics = await data.get_job_metrics(hours=24)
+    assert metrics["successful"] == 3
+    assert metrics["dead_lettered"] == 1
+    assert metrics["total_processed"] == 4
+    assert metrics["success_rate"] == 75.0
+    assert isinstance(metrics["avg_processing_time_ms"], float)
+
+    timeline = await data.get_job_timeline(hours=24)
+    assert sum(h["total_jobs"] for h in timeline) == 5
+    assert sum(h["completed"] for h in timeline) == 3
+    assert sum(h["dead_letter"] for h in timeline) == 1
+    for h in timeline:
+        hour = datetime.fromisoformat(h["hour"])
+        assert hour.astimezone(timezone.utc).minute == 0

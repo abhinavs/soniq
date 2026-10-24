@@ -11,14 +11,10 @@ The 0.0.5 virtualenv is cached in pytest's cache directory, so only the
 first run needs the network.
 """
 
-import asyncio
 import subprocess
-import sys
 import time
 
-import asyncpg
-
-from .conftest import cli_env, recreate_db, run_cli, run_until
+from .conftest import check, cli_env, fetch, old_venv, recreate_db, run_cli, run_until
 
 OLD_VERSION = "0.0.5"
 
@@ -73,46 +69,9 @@ asyncio.run(main())
 """
 
 
-def _old_venv(cache_dir):
-    python = cache_dir / "bin" / "python"
-    check = [str(python), "-c", "import soniq; print(soniq.__version__)"]
-    if python.exists():
-        found = subprocess.run(check, capture_output=True, text=True, cwd=cache_dir)
-        if found.stdout.strip() == OLD_VERSION:
-            return cache_dir
-    subprocess.run(
-        [sys.executable, "-m", "venv", "--clear", str(cache_dir)], check=True
-    )
-    subprocess.run(
-        [str(python), "-m", "pip", "install", "-q", f"soniq=={OLD_VERSION}"],
-        check=True,
-        timeout=300,
-    )
-    return cache_dir
-
-
-def _fetch(url, query):
-    async def go():
-        conn = await asyncpg.connect(url)
-        try:
-            return await conn.fetch(query)
-        finally:
-            await conn.close()
-
-    return asyncio.run(go())
-
-
-def _check(proc, *expect):
-    out = proc.stdout + proc.stderr
-    assert proc.returncode == 0, out
-    for line in expect:
-        assert line in out, f"{line!r} missing:\n{out}"
-    return out
-
-
 def test_upgrade_in_place(request, tmp_path):
     url = recreate_db("soniq_compat_upgrade")
-    old = _old_venv(request.config.cache.mkdir("soniq-0.0.5-venv"))
+    old = old_venv(request.config.cache.mkdir("soniq-0.0.5-venv"), OLD_VERSION)
     (tmp_path / "compat_upgrade_jobs.py").write_text(JOBS.replace("{url}", url))
     (tmp_path / "produce.py").write_text(OLD_PRODUCER)
     env = cli_env(SONIQ_DATABASE_URL=url, SONIQ_JOBS_MODULES="compat_upgrade_jobs")
@@ -123,28 +82,28 @@ def test_upgrade_in_place(request, tmp_path):
             argv, env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60
         )
 
-    _check(old_run(str(old / "bin" / "soniq"), "setup"), "Applying")
-    out = _check(old_run(str(old / "bin" / "python"), "produce.py"), "DEAD ")
+    check(old_run(str(old / "bin" / "soniq"), "setup"), "Applying")
+    out = check(old_run(str(old / "bin" / "python"), "produce.py"), "DEAD ")
     dead_id = out.split("DEAD ")[1].split()[0]
 
-    jobs = _fetch(url, "SELECT job_name, status FROM soniq_jobs")
+    jobs = fetch(url, "SELECT job_name, status FROM soniq_jobs")
     assert sorted(r["job_name"] for r in jobs) == ["compat.hello"] * 3
     assert {r["status"] for r in jobs} == {"queued"}
 
     # --- the code under test takes over ---
-    _check(
+    check(
         run_cli("setup", env=env, cwd=tmp_path),
         "Core schema is already up to date",
         "Database setup completed (no migrations needed)",
     )
-    _check(
+    check(
         run_cli("migrate-status", env=env, cwd=tmp_path),
         "Pending migrations: 0",
         "Status: Up to date",
     )
 
     def ticked(_out):
-        rows = _fetch(url, "SELECT 1 FROM soniq_jobs WHERE job_name = 'compat.tick'")
+        rows = fetch(url, "SELECT 1 FROM soniq_jobs WHERE job_name = 'compat.tick'")
         return bool(rows)
 
     rc, out = run_until(
@@ -154,16 +113,16 @@ def test_upgrade_in_place(request, tmp_path):
 
     # The scheduled job was due 2s after the producer ran.
     time.sleep(2)
-    _check(
+    check(
         run_cli("worker", "--run-once", env=env, cwd=tmp_path),
         "hello normal",
         "hello scheduled",
         "hello unique",
     )
 
-    rows = _fetch(url, "SELECT job_name, status FROM soniq_jobs")
+    rows = fetch(url, "SELECT job_name, status FROM soniq_jobs")
     left = [(r["job_name"], r["status"]) for r in rows if r["status"] != "done"]
     assert not left, f"jobs not finished after upgrade: {left}"
-    dead = _fetch(url, "SELECT id::text AS id, job_name FROM soniq_dead_letter_jobs")
+    dead = fetch(url, "SELECT id::text AS id, job_name FROM soniq_dead_letter_jobs")
     assert [(r["id"], r["job_name"]) for r in dead] == [(dead_id, "compat.boom")]
-    _check(run_cli("dead-letter", "list", env=env, cwd=tmp_path), dead_id)
+    check(run_cli("dead-letter", "list", env=env, cwd=tmp_path), dead_id)

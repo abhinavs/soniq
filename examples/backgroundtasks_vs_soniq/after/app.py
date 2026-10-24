@@ -15,7 +15,7 @@ SEND_SECONDS = float(os.environ.get("SEND_SECONDS", "5"))
 soniq = Soniq(database_url=DATABASE_URL)
 
 
-@soniq.job()
+@soniq.job(name="emails.send_welcome")
 async def send_welcome(user_id: int) -> None:
     await asyncio.sleep(SEND_SECONDS)  # stands in for a slow mail provider
     conn = await asyncpg.connect(DATABASE_URL)

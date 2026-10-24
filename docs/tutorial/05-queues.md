@@ -9,11 +9,11 @@ Queues let you separate jobs by workload type and control which workers process 
 Assign a job to a queue in the decorator:
 
 ```python
-@soniq.job(queue="emails")
+@soniq.job(name="emails.send_welcome_email", queue="emails")
 async def send_welcome_email(user_id: int):
     ...
 
-@soniq.job(queue="billing")
+@soniq.job(name="billing.charge_subscription", queue="billing")
 async def charge_subscription(account_id: str, amount: int):
     ...
 
@@ -40,7 +40,7 @@ Within a queue, jobs are processed by priority. Lower number means higher priori
 | 100 | Default -- the `@soniq.job` default |
 
 ```python
-@soniq.job(queue="billing", priority=10)
+@soniq.job(name="billing.charge_subscription", queue="billing", priority=10)
 async def charge_subscription(account_id: str, amount: int):
     ...
 

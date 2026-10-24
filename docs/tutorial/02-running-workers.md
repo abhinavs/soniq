@@ -31,7 +31,7 @@ Each worker runs a configurable number of asyncio tasks (default: 4). These task
 - CPU-bound jobs block the event loop. Wrap them in `asyncio.to_thread()`:
 
 ```python
-@soniq.job()
+@soniq.job(name="reports.generate_pdf")
 async def generate_pdf(report_id: str):
     report = await fetch_report(report_id)
     # Offload CPU work to a thread

@@ -27,4 +27,4 @@ Set the `SONIQ_DEPRECATIONS` environment variable to change this behavior:
 
 | Name | Deprecated in | Removed in | Use instead |
 | ---- | ------------- | ---------- | ----------- |
-|      |               |            |             |
+| Job names derived from the module path (`@soniq.job()` with no `name=`) | 0.2.0 | 1.0 | `@soniq.job(name="...")`, set to the name Soniq derived so queued jobs still match. See [Storage format](reference/storage-format.md#job-names). |

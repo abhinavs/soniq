@@ -11,7 +11,7 @@ from soniq import Soniq
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@soniq.job(queue="media", timeout=600, max_retries=2)
+@soniq.job(name="media.process_upload", queue="media", timeout=600, max_retries=2)
 async def process_upload(file_id: int):
     file = await get_file(file_id)
 
@@ -56,7 +56,7 @@ Keep concurrency low for media workers. Each job may consume significant memory 
 **Multiple processing steps.** Break large jobs into a pipeline:
 
 ```python
-@soniq.job(queue="media", timeout=300, max_retries=2)
+@soniq.job(name="media.generate_thumbnails", queue="media", timeout=300, max_retries=2)
 async def generate_thumbnails(file_id: int):
     file = await get_file(file_id)
     sizes = [(150, 150), (300, 300), (800, 800)]
@@ -66,7 +66,7 @@ async def generate_thumbnails(file_id: int):
     await soniq.enqueue(extract_metadata, file_id=file_id)
 
 
-@soniq.job(queue="media", timeout=60, max_retries=2)
+@soniq.job(name="media.extract_metadata", queue="media", timeout=60, max_retries=2)
 async def extract_metadata(file_id: int):
     file = await get_file(file_id)
     metadata = await asyncio.to_thread(read_exif, file.path)
@@ -76,7 +76,7 @@ async def extract_metadata(file_id: int):
 **Progress tracking.** Update a status field so the API can report progress:
 
 ```python
-@soniq.job(queue="media", timeout=600, max_retries=2)
+@soniq.job(name="media.process_video", queue="media", timeout=600, max_retries=2)
 async def process_video(file_id: int):
     await update_status(file_id, "transcoding")
     output = await asyncio.to_thread(transcode_video, file.path)

@@ -62,7 +62,7 @@ With Soniq the task is a row in Postgres. The change is small:
 +soniq = Soniq()
 +app = FastAPI(lifespan=lifespan(soniq, run_worker=True))
 
-+@soniq.job(retries=3)
++@soniq.job(name="emails.send_welcome", retries=3)
  async def send_welcome(user_id: int):
      ...
 

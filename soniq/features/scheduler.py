@@ -403,8 +403,8 @@ class Scheduler:
         schedule_type, schedule_value = _coerce_schedule(cron=cron, every=every)
         args = args or {}
         try:
-            json.dumps(args)
-        except TypeError as exc:
+            json.dumps(args, allow_nan=False)
+        except (TypeError, ValueError) as exc:
             raise ValueError("args must be JSON-serializable") from exc
 
         # Pick up registered defaults when caller didn't override.

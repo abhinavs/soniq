@@ -18,7 +18,7 @@ from typing import Any, List, Optional
 from soniq.core.middleware import build_chain
 from soniq.core.registry import JobRegistry
 from soniq.core.retry import DEFAULT_RETRY_POLICY
-from soniq.job import JobContext, Snooze
+from soniq.job import JobContext, Snooze, context_param
 from soniq.observability.metrics import DEFAULT_METRICS_SINK
 from soniq.settings import SoniqSettings
 
@@ -97,7 +97,6 @@ async def _execute_job_safely(
     # Inject JobContext if the function signature has it
 
     func = job_meta["func"]
-    sig = inspect.signature(func)
     ctx = JobContext(
         job_id=str(job_record["id"]),
         job_name=job_record["job_name"],
@@ -108,10 +107,9 @@ async def _execute_job_safely(
         scheduled_at=job_record.get("scheduled_at"),
         created_at=job_record.get("created_at"),
     )
-    for param_name, param in sig.parameters.items():
-        if param.annotation is JobContext:
-            validated_args[param_name] = ctx
-            break
+    ctx_name = context_param(func)
+    if ctx_name is not None:
+        validated_args[ctx_name] = ctx
 
     # Determine timeout: per-job overrides instance setting
     timeout = job_meta.get("timeout")
@@ -444,17 +442,18 @@ async def _dispatch_and_record(
             return True
 
         # The handler's side effects already happened, so a bad return value
-        # doesn't fail the job. Postgres and SQLite store str() of it instead.
+        # doesn't fail the job. Store no result rather than Python-only text.
         try:
-            json.dumps(job_result)
+            json.dumps(job_result, allow_nan=False)
         except (TypeError, ValueError):
-            logger.warning(
-                "Job %s (%s) returned a %s, which is not JSON-serializable; "
-                "Postgres and SQLite store str() of it as the result",
+            logger.error(
+                "Job %s (%s) returned a %s, which is not plain JSON; "
+                "the job is done but no result is stored",
                 job_id,
                 job_name,
                 type(job_result).__name__,
             )
+            job_result = None
         await backend.mark_job_done(
             job_id, result_ttl=settings.result_ttl, result=job_result
         )
