@@ -210,8 +210,14 @@ class _SqlStore:
         # `job_name` has no UNIQUE constraint (PK is `id`), so we replace
         # any existing rows for this name in one transaction instead of
         # using ON CONFLICT. Keeps re-adds idempotent without a migration.
+        # The advisory lock serializes concurrent upserts of the same name,
+        # e.g. two schedulers starting at once. Without it both DELETEs see
+        # nothing and both INSERTs land, so the job fires twice.
         async with self._conn() as conn:
             async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))", sched.name
+                )
                 await conn.execute(
                     "DELETE FROM soniq_recurring_jobs WHERE job_name = $1",
                     sched.name,
@@ -511,6 +517,22 @@ class Scheduler:
         # loop starts so a bare `soniq scheduler` process picks them up
         # without the user calling `add()` explicitly.
         await self._register_decorated()
+        # A tick slower than the shortest every= interval would silently run
+        # that job less often than asked, so tick at least that often.
+        await self._ensure_loaded()
+        intervals = [
+            int(sc.schedule_value)
+            for sc in self._cache.values()
+            if sc.schedule_type == "interval" and sc.status == "active"
+        ]
+        if intervals and min(intervals) < self._check_interval:
+            logger.info(
+                "Lowering scheduler check interval from %ds to %ds to match "
+                "the shortest every= schedule",
+                self._check_interval,
+                min(intervals),
+            )
+            self._check_interval = min(intervals)
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("Scheduler started (check interval: %ds)", self._check_interval)

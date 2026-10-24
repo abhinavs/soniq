@@ -14,7 +14,7 @@ The fast version. Every row is expanded in the sections that follow.
 | `@app.task` | `@soniq.job()` | Always called with parentheses. |
 | `@app.task(bind=True, max_retries=5)` | `@soniq.job(retries=5)` | No `bind=True` - hooks replace `self`. See "Hooks vs `bind=True`". |
 | `task.delay(arg)` | `await soniq.enqueue(task, arg=arg)` | Always `await`ed. Keyword-only args. |
-| `task.apply_async(args=[...], kwargs={...}, countdown=30)` | `await soniq.enqueue(task, ..., delay=30)` | Soniq's `enqueue` is the one entry point. |
+| `task.apply_async(args=[...], kwargs={...}, countdown=30)` | `await soniq.enqueue(task, ..., scheduled_at=30)` | Soniq's `enqueue` is the one entry point. |
 | `task.apply_async(eta=datetime)` | `await soniq.enqueue(task, scheduled_at=datetime, ...)` | |
 | `task.apply_async(queue="urgent")` | `await soniq.enqueue(task, queue="urgent", ...)` | Or set `queue=` on `@soniq.job(...)` for a default. |
 | `result = task.delay(...); result.get()` | `result = await soniq.get_result(job_id)` | See "Results and the result backend". |
@@ -131,7 +131,7 @@ await soniq.enqueue(
     send_email,
     to="dev@example.com",
     subject="Hi",
-    delay=30,
+    scheduled_at=30,  # seconds from now
     queue="urgent",
     priority=5,
 )
@@ -164,7 +164,7 @@ Celery exposes an open-ended set of states (`PENDING / STARTED / SUCCESS / FAILU
 | `done` | Handler returned successfully. |
 | `cancelled` | Cancelled before it ran via `soniq.cancel_job(...)`. |
 
-There is no `failed` row state. A failure either re-queues the job (back to `queued`) or, after exhausting retries, moves it into a separate `soniq_dead_letter_jobs` table. The dead-letter table is durable, queryable, and replayable via `soniq.dead_letter.replay(dlq_id)`.
+There is no `failed` row state. A failure either re-queues the job (back to `queued`) or, after exhausting retries, moves it into a separate `soniq_dead_letter_jobs` table. The dead-letter table is durable, queryable, and replayable via `soniq.dead_letter.replay(dlq_id)`. `soniq.get_job(job_id)` still finds a dead-lettered job and reports its `status` as `"dead_letter"`.
 
 This is closer to RQ's lifecycle than Celery's, and it has one important consequence: **`status="queued"` does not distinguish "not yet picked up" from "we have never heard of this job"**. If you want strict "did this job ever exist" semantics, store the `job_id` you got back from `enqueue` and use `soniq.get_job(job_id)` - that returns `None` for unknown ids.
 

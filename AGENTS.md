@@ -119,7 +119,9 @@ await soniq.enqueue(send_email, "dev@example.com", "Hi")
 await soniq.enqueue(send_email, to="dev@example.com", subject="Hi")
 ```
 
-The keyword-only style avoids ambiguity between Soniq's framework options (`queue`, `delay`, `priority`, `scheduled_at`) and your job's own arguments.
+The keyword-only style avoids ambiguity between Soniq's framework options (`queue`, `priority`, `scheduled_at`, `unique`, `dedup_key`, `connection`) and your job's own arguments. There is no `delay=`: pass `scheduled_at=` a `datetime` or `timedelta`, or use `soniq.schedule(fn, when, **kwargs)`.
+
+Enqueue checks the kwargs against the handler's signature (unless the job has a `validate=` model, which checks them instead) and rejects arguments that aren't JSON, such as a `datetime` or `UUID`. Both raise `SoniqError` (`from soniq import SoniqError`) with `error_code == "SONIQ_TASK_ARGS_INVALID"`.
 
 `send_email.enqueue("dev@example.com")` raises `TypeError` too. A type checker does not catch it, because `ParamSpec` cannot express keyword-only arguments.
 
@@ -148,13 +150,13 @@ def main():
 
 ### 4. Returning non-JSON values from a handler
 
-Soniq stores results in `soniq_jobs.result` (`JSONB`). Return values must be JSON-serialisable.
+Soniq stores results in `soniq_jobs.result` (`JSONB`). Return values must be JSON-serialisable. Anything else is stored as its `str()` and the worker logs a warning, so the job still completes but the caller gets a string back.
 
 ```python
 # WRONG
 @soniq.job()
 async def fetch_user(user_id: int) -> User:
-    return await User.get(user_id)        # Pydantic model, datetimes, UUIDs - won't serialise as-is
+    return await User.get(user_id)        # Pydantic model, datetimes, UUIDs - stored as str()
 
 # RIGHT
 @soniq.job()
@@ -214,7 +216,9 @@ async def test_signup(soniq_memory):
     assert await drain(soniq_memory) == [None]
 ```
 
-The `soniq_memory` and `soniq_pg` fixtures come from an opt-in plugin: add `pytest_plugins = ["soniq.testing.pytest_plugin"]` to `conftest.py`. Without the `soniq` marker, the fixture only knows jobs you define on it inside the test. See `docs/guides/testing.md`.
+The `soniq_memory` and `soniq_pg` fixtures come from an opt-in plugin: add `pytest_plugins = ["soniq.testing.pytest_plugin"]` to `conftest.py`. Without the `soniq` marker, the fixture only knows jobs you define on it inside the test. With it, `send_email.enqueue(...)` and your module-level `soniq.enqueue(...)` also land in the fixture during the test.
+
+The tests are async, so set `asyncio_mode = "auto"` under `[tool.pytest.ini_options]` (or mark each test `@pytest.mark.asyncio`). Without it pytest skips them. See `docs/guides/testing.md`.
 
 ## Periodic jobs
 
@@ -257,11 +261,11 @@ Hooks are sync-or-async. A failing hook is logged and ignored - it never blocks 
 | `soniq setup [APP]` | Create/update schema. Idempotent. Run once per deploy. |
 | `soniq worker [APP] [--concurrency N] [--queues a,b]` | Long-running worker process. |
 | `soniq scheduler [APP]` | Long-running periodic-job dispatcher. Run one (more if you want failover - they leader-elect). |
-| `soniq dashboard [--host 0.0.0.0] [--port 6161]` | Web UI for inspecting jobs and queues. Read-only by default. |
-| `soniq inspect` | List active workers and their status. `--cleanup` removes stale records. |
+| `soniq dashboard [APP] [--host 0.0.0.0] [--port 6161]` | Web UI for inspecting jobs and queues. Read-only by default. |
+| `soniq inspect [APP]` | List active workers and their status. `--cleanup` removes stale records. |
 | `soniq dead-letter list \| replay \| delete \| cleanup \| export` | DLQ management. |
-| `soniq status [--verbose] [--jobs]` | Health summary, queue stats, recent jobs. |
-| `soniq migrate-status` | Show applied vs pending migrations. |
+| `soniq status [APP] [--verbose] [--jobs]` | Health summary, queue stats, recent jobs. |
+| `soniq migrate-status [APP]` | Show applied vs pending migrations. |
 | `soniq migrations export --alembic\|--sql` | Print core migrations as an Alembic revision or SQL. |
 
 Full reference: `docs/cli/commands.md`.

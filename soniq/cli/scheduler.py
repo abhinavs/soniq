@@ -6,6 +6,7 @@ import asyncio
 import os
 
 from soniq.discovery import discover_and_import_modules
+from soniq.utils.signals import GracefulSignalHandler
 
 from ._context import execution_app
 from ._helpers import (
@@ -27,7 +28,10 @@ def add_scheduler_cmd(subparsers) -> None:
         "--check-interval",
         type=int,
         default=60,
-        help="How often to check for due jobs in seconds (default: 60)",
+        help=(
+            "How often to check for due jobs in seconds (default: 60). "
+            "Lowered automatically to the shortest every= interval."
+        ),
     )
     parser.add_argument(
         "--jobs-modules",
@@ -75,16 +79,27 @@ async def handle_scheduler(args) -> int:
         )
         print("Use Ctrl+C to stop gracefully")
 
+        # SIGTERM is how Docker, Kubernetes and systemd stop a process, so
+        # treat it like Ctrl+C instead of dying without stopping the loop.
+        stop = asyncio.Event()
+        signals = GracefulSignalHandler()
+        signals.setup_signal_handlers(stop)
         try:
             await scheduler.start(check_interval=args.check_interval)
-            while scheduler.running:
-                await asyncio.sleep(10)
-            print("Scheduler stopped unexpectedly")
-        except KeyboardInterrupt:
+            while scheduler.running and not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    pass
+            if not stop.is_set():
+                print("Scheduler stopped unexpectedly")
+                return 0
             print("Stopping scheduler...")
             await scheduler.stop()
             print("Scheduler stopped")
         except Exception as e:
             print(f"Scheduler error: {e}")
             return 1
+        finally:
+            signals.restore_signal_handlers()
         return 0

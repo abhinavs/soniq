@@ -22,6 +22,7 @@ Usage::
 from importlib.metadata import PackageNotFoundError, version
 
 from .app import Soniq
+from .errors import SoniqError
 from .job import JobContext, JobStatus, Snooze
 from .schedules import cron, daily, every, monthly, weekly
 from .task_ref import TaskRef, task_ref
@@ -33,6 +34,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "Soniq",
+    "SoniqError",
     "JobContext",
     "JobStatus",
     "Snooze",

@@ -1,6 +1,8 @@
 """Soniq application instance."""
 
 import asyncio
+import inspect
+import json
 import logging
 import os
 import re
@@ -44,6 +46,7 @@ from .features.logging import LogService
 from .features.scheduler import Scheduler, _coerce_schedule
 from .features.signing import SigningService
 from .features.webhooks import HTTPTransport, WebhookService
+from .job import JobContext
 from .observability.metrics import DEFAULT_METRICS_SINK
 from .plugin import (
     PluginCLI,
@@ -67,6 +70,43 @@ _JP = ParamSpec("_JP")
 _JR = TypeVar("_JR")
 
 logger = logging.getLogger(__name__)
+
+
+def _check_job_args(
+    job_name: str, job_meta: Optional[dict], args: dict, check_signature: bool
+) -> None:
+    """Reject args the worker could never run, at enqueue time.
+
+    Args must be JSON: the backends would otherwise turn a datetime or UUID
+    into a string and the handler would get the wrong type. When the job is
+    registered here and has no ``validate=`` model, the kwargs must also fit
+    the handler's signature, so a typo fails now instead of on every retry.
+    """
+    try:
+        json.dumps(args)
+    except (TypeError, ValueError) as e:
+        raise SoniqError(
+            f"Arguments for task {job_name!r} must be JSON-serializable: {e}",
+            SONIQ_TASK_ARGS_INVALID,
+            context={"task_name": job_name},
+            suggestions=[
+                "Pass plain dicts, lists, strings, numbers, booleans or None.",
+                "Convert datetimes with .isoformat() and UUIDs with str().",
+            ],
+        ) from e
+    if not check_signature or job_meta is None or job_meta.get("args_model"):
+        return
+    sig = inspect.signature(job_meta["func"])
+    # The worker injects JobContext itself, so callers never pass it.
+    params = [p for p in sig.parameters.values() if p.annotation is not JobContext]
+    try:
+        sig.replace(parameters=params).bind(**args)
+    except TypeError as e:
+        raise SoniqError(
+            f"Invalid arguments for task {job_name!r}: {e}",
+            SONIQ_TASK_ARGS_INVALID,
+            context={"task_name": job_name},
+        ) from e
 
 
 def _pool_sizing_error(
@@ -636,6 +676,8 @@ class Soniq:
                     )
             # mode == "none" -> silent
 
+        _check_job_args(job_name, job_meta, args, check_signature=ref is None)
+
         if job_meta is not None:
             args_model = job_meta.get("args_model")
             # Skip validation when the TaskRef arm already ran its own check.
@@ -813,6 +855,13 @@ class Soniq:
                         "(SONIQ_ENQUEUE_VALIDATION=warn); enqueueing anyway.",
                         job_name,
                     )
+
+        for i, args in enumerate(args_list):
+            try:
+                _check_job_args(job_name, job_meta, args, check_signature=ref is None)
+            except SoniqError as e:
+                e.context["index"] = i
+                raise
 
         if job_meta is not None:
             args_model = job_meta.get("args_model")

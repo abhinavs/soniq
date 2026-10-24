@@ -22,7 +22,7 @@ def add_status_cmd(subparsers) -> None:
         "--verbose", action="store_true", help="Show detailed information"
     )
     database_url_argument(parser)
-    app_argument(parser)
+    app_argument(parser, positional=True)
     parser.set_defaults(func=handle_status)
 
 

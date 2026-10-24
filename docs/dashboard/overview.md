@@ -42,9 +42,13 @@ To enable write actions:
 
 ```bash
 export SONIQ_DASHBOARD_WRITE_ENABLED=true
+export SONIQ_DASHBOARD_API_KEY="$(openssl rand -hex 32)"
 ```
 
-Keep write mode disabled in production unless the dashboard is behind authentication.
+Write mode needs both variables. Once the key is set, every request (reads too)
+must send it in the `X-API-Key` header or the `?api_key=` query parameter.
+There is no localhost exemption, because a reverse proxy on the same host
+looks exactly like a local caller.
 
 
 ## Mounting inside a FastAPI app
@@ -113,9 +117,9 @@ the source of truth if this table drifts.
 ### Write endpoints
 
 These return `403 Forbidden` with a `{"detail": "..."}` body explaining that
-writes are disabled unless `SONIQ_DASHBOARD_WRITE_ENABLED=true` is set. When
-write mode is on and the caller is not on loopback, `SONIQ_DASHBOARD_API_KEY`
-must also be supplied (via the `X-API-Key` header).
+writes are disabled unless `SONIQ_DASHBOARD_WRITE_ENABLED=true` and
+`SONIQ_DASHBOARD_API_KEY` are both set. Callers pass the key in the
+`X-API-Key` header.
 
 | Method | Path | Description |
 |---|---|---|
@@ -129,7 +133,7 @@ must also be supplied (via the `X-API-Key` header).
 | Env var | Default | Description |
 |---|---|---|
 | `SONIQ_DASHBOARD_WRITE_ENABLED` | `false` | Enable replay/cancel/delete actions. |
-| `SONIQ_DASHBOARD_API_KEY` | (unset) | Required for non-loopback callers when write mode is on. |
+| `SONIQ_DASHBOARD_API_KEY` | (unset) | Required for write mode. When set, every request must send it. |
 | `SONIQ_DATABASE_URL` | `postgresql://postgres@localhost/soniq` | Database the dashboard reads from. |
 
 CLI flags for `soniq dashboard`:

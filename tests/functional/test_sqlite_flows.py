@@ -91,7 +91,7 @@ async def test_dead_letter_after_max(backend, registry):
 
     # DLQ Option A: dead-lettered rows leave soniq_jobs and live in
     # soniq_dead_letter_jobs as the single source of truth.
-    assert await backend.get_job(job_id) is None
+    assert (await backend.get_job(job_id))["status"] == "dead_letter"
     async with backend._conn.execute(
         "SELECT COUNT(*) AS c FROM soniq_dead_letter_jobs WHERE id=?", (job_id,)
     ) as cursor:

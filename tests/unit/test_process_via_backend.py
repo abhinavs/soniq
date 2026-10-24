@@ -150,5 +150,5 @@ async def test_process_via_backend_dead_letters_after_max_attempts():
     await process_job_via_backend(
         backend=backend, job_registry=registry, queues=["default"]
     )
-    assert await backend.get_job("job-dead") is None
+    assert (await backend.get_job("job-dead"))["status"] == "dead_letter"
     assert "job-dead" in backend._dead_letter_jobs

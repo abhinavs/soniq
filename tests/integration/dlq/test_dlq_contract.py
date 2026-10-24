@@ -72,7 +72,7 @@ async def test_dlq_runtime_move_atomicity(backend):
     )
 
     # soniq_jobs row is gone.
-    assert await backend.get_job(job_id) is None
+    assert (await backend.get_job(job_id))["status"] == "dead_letter"
 
     # DLQ row exists with the metadata we passed.
     dlq_row = await dlq_get(backend, job_id)
@@ -114,7 +114,7 @@ async def test_dlq_concurrent_move_and_stats(backend):
     assert stats["total"] == 5
 
     for jid in job_ids:
-        assert await backend.get_job(jid) is None
+        assert (await backend.get_job(jid))["status"] == "dead_letter"
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_dlq_mid_transaction_crash(backend):
         await backend.mark_job_dead_letter(
             job_id, attempts=3, error="boom", reason="max_retries_exceeded"
         )
-        assert await backend.get_job(job_id) is None
+        assert (await backend.get_job(job_id))["status"] == "dead_letter"
         assert job_id in backend._dead_letter_jobs
         return
 

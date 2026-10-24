@@ -9,7 +9,7 @@ If you are an agent generating Soniq code, the most common four mistakes are:
 1. Calling the decorator without parens (`@soniq.job` instead of `@soniq.job()`). Always use parens.
 2. Passing job arguments positionally to `enqueue` (`await soniq.enqueue(send, "a@b.com")`). Job args are keyword-only - use `to="a@b.com"`.
 3. Forgetting `await` on `enqueue` from sync code. Wrap in `asyncio.run(...)` for one-shot scripts.
-4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
+4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - anything else is stored as its `str()` with a warning. Return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
 
 Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brief.
 

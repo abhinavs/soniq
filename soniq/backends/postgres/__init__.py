@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator, Optional
 
 import asyncpg
 
+from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
 from soniq.backends.helpers import rows_affected as _rows_affected
 from soniq.settings import get_settings
 from soniq.types import QueueStats
@@ -750,9 +751,22 @@ class PostgresBackend:
                 """,
                 uid,
             )
-            if not row:
+            if row:
+                return _job_row_to_dict(row)
+            # Dead-lettered jobs move to their own table under the same id.
+            dl = await conn.fetchrow(
+                """
+                SELECT id, job_name, args, attempts, max_attempts, queue,
+                       priority, last_error, dead_letter_reason,
+                       original_created_at, moved_to_dead_letter_at
+                FROM soniq_dead_letter_jobs
+                WHERE id = $1
+                """,
+                uid,
+            )
+            if not dl:
                 return None
-            return _job_row_to_dict(row)
+            return _dead_letter_row_to_dict(dict(dl))
 
     async def list_jobs(
         self,

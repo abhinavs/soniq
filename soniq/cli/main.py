@@ -19,6 +19,7 @@ unless the operator asked for it.
 
 import argparse
 import asyncio
+import inspect
 import os
 import sys
 from typing import List, Optional
@@ -164,7 +165,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         if hasattr(args, "func"):
-            if asyncio.iscoroutinefunction(args.func):
+            if inspect.iscoroutinefunction(args.func):
                 rc = asyncio.run(args.func(args))
             else:
                 rc = args.func(args)

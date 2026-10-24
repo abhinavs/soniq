@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
 from soniq.backends.helpers import no_transactional_enqueue
 from soniq.types import QueueStats
 
@@ -437,9 +438,17 @@ class SQLiteBackend:
             (job_id,),
         ) as cursor:
             row = await cursor.fetchone()
-            if not row:
-                return None
+        if row:
             return _sqlite_row_to_dict(row)
+        # Dead-lettered jobs move to their own table under the same id.
+        async with self._conn.execute(
+            "SELECT * FROM soniq_dead_letter_jobs WHERE id=?",
+            (job_id,),
+        ) as cursor:
+            dl = await cursor.fetchone()
+        if not dl:
+            return None
+        return _dead_letter_row_to_dict(_sqlite_row_to_dict(dl))
 
     async def list_jobs(
         self,

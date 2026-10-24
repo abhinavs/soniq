@@ -378,7 +378,7 @@ async def flush_metrics():
     ...
 ```
 
-The scheduler checks for due jobs every `--check-interval` seconds (default 60). An `every=` interval shorter than that rounds up to it, so the 30-second job above fires about once a minute unless you run `soniq scheduler --check-interval 30` or lower. The first run comes about one check interval after the scheduler starts.
+The scheduler checks for due jobs every `--check-interval` seconds (default 60). If an `every=` interval is shorter, the scheduler lowers its check interval to match at startup, so the 30-second job above fires every 30 seconds. The first run comes about one check interval after the scheduler starts.
 
 ### Parameters
 

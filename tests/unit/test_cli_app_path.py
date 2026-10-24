@@ -39,7 +39,18 @@ def _args(app, database_url=None, jobs_modules=None):
 # Parsing
 
 
-@pytest.mark.parametrize("command", ["worker", "setup", "scheduler"])
+POSITIONAL_APP_COMMANDS = [
+    "worker",
+    "setup",
+    "scheduler",
+    "status",
+    "inspect",
+    "dashboard",
+    "migrate-status",
+]
+
+
+@pytest.mark.parametrize("command", POSITIONAL_APP_COMMANDS)
 def test_positional_app_is_parsed(command, fake_module):
     args = build_parser().parse_args([command, "fake_app_mod:soniq"])
     assert args.app == "fake_app_mod:soniq"
@@ -57,7 +68,7 @@ def test_no_app_leaves_app_none():
     assert build_parser().parse_args(["worker"]).app is None
 
 
-@pytest.mark.parametrize("command", ["worker", "setup", "scheduler"])
+@pytest.mark.parametrize("command", POSITIONAL_APP_COMMANDS)
 def test_non_app_positional_is_still_unrecognized(command, capsys):
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args([command, "no_such_module_xyz"])
@@ -71,6 +82,7 @@ def test_non_app_positional_is_still_unrecognized(command, capsys):
         ["status", "--app", "m:a"],
         ["inspect", "--app", "m:a"],
         ["dashboard", "--app", "m:a"],
+        ["migrate-status", "--app", "m:a"],
         ["dead-letter", "list", "--app", "m:a"],
     ],
 )

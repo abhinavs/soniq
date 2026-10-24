@@ -8,7 +8,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Upgrading from 0.0.5
 
-No code, config or schema change is needed. `soniq setup` has nothing to apply. All 0.0.5 APIs, CLI commands, flags and env vars work as before.
+No schema change is needed. `soniq setup` has nothing to apply. All 0.0.5 APIs, CLI commands, flags and env vars still exist. Three behavior changes may need a look:
+
+- Dashboard writes now always need `SONIQ_DASHBOARD_API_KEY`. Localhost callers used to be exempt.
+- `enqueue` rejects kwargs that don't match the handler, and args that aren't JSON. These used to be accepted and failed (or arrived as strings) in the worker.
+- `get_job` returns dead-lettered jobs with `status` `"dead_letter"` instead of `None`.
 
 ### Deprecations
 
@@ -18,8 +22,9 @@ None in this release.
 
 - **`enqueue(connection=...)` accepts an SQLAlchemy `AsyncSession` or `AsyncConnection`.** The job is written in the same transaction as your ORM writes. If SQLAlchemy rolls back, the job is gone too. Works with the `asyncpg` and `psycopg` drivers. Install with `pip install "soniq[sqlalchemy]"`.
 - **FastAPI lifespan helper.** `from soniq.integrations.fastapi import lifespan`, then `FastAPI(lifespan=lifespan(soniq, run_worker=True))`. It initializes Soniq, can run a worker in the same process, stops it gracefully on shutdown, and closes Soniq. `extra=` chains your own lifespan.
-- **`soniq worker myapp.jobs:soniq`.** `worker`, `setup` and `scheduler` accept an optional `module:attribute` argument that points at your `Soniq` instance. `worker`, `setup`, `scheduler`, `status`, `inspect`, `dashboard` and `dead-letter` accept `--app module:attribute`. With an app path, the database URL comes from `--database-url`, then `SONIQ_DATABASE_URL`, then the instance. Without one, nothing changes.
+- **`soniq worker myapp.jobs:soniq`.** `worker`, `setup`, `scheduler`, `status`, `inspect`, `dashboard` and `migrate-status` accept an optional `module:attribute` argument that points at your `Soniq` instance. All of them and `dead-letter` accept `--app module:attribute`. With an app path, the database URL comes from `--database-url`, then `SONIQ_DATABASE_URL`, then the instance. Without one, nothing changes.
 - **`.enqueue()` and `.options()` on job functions.** `await send_welcome.enqueue(to="dev@example.com")` does the same as `await soniq.enqueue(send_welcome, to="dev@example.com")`, and a type checker checks the arguments against the job signature. `send_welcome.options(queue="emails", priority=1).enqueue(...)` sets enqueue options. The decorator still returns the same plain function. `soniq.enqueue(fn, ...)` stays supported and is not deprecated.
+- **`SoniqError` is exported from the top-level package.** `from soniq import SoniqError` works, so you can catch `SONIQ_TASK_ARGS_INVALID` without reaching into `soniq.errors`.
 - **`soniq.types.JobFunction` and `soniq.types.JobOptions`** protocols.
 - **psycopg 3 for transactional enqueue.** `enqueue(connection=...)` accepts a `psycopg.AsyncConnection`. New `psycopg` extra. `soniq.integrations.sqlalchemy.to_driver_connection` returns either driver connection; `to_asyncpg_connection` stays as an alias.
 - **`Soniq.run_worker(..., shutdown_event=None)`.** Pass an `asyncio.Event` to control shutdown yourself. Setting it drains in-flight jobs. When given, the worker installs no signal handlers.
@@ -32,11 +37,21 @@ None in this release.
 
 ### Changed
 
+- **Dashboard writes always need `SONIQ_DASHBOARD_API_KEY`.** The localhost exemption is gone. A reverse proxy on the same host (nginx's default `proxy_pass http://127.0.0.1:6161`) arrives from loopback with a loopback `Host` header, so it let anyone through.
+- **`enqueue` and `enqueue_many` check arguments up front.** For a registered job without a `validate=` model, the kwargs must fit the handler's signature (`JobContext` parameters are skipped). Args must also be JSON. Both raise `SoniqError` with `SONIQ_TASK_ARGS_INVALID`. Before, a typo failed in the worker on every retry, and a `datetime` or `UUID` reached the handler as a string.
+- **`get_job` finds dead-lettered jobs.** It returns them with `status` `"dead_letter"` and a `dead_letter_reason` instead of `None`.
+- **The scheduler checks at least as often as the shortest `every=` schedule.** With the default `--check-interval 60`, an `every=timedelta(seconds=15)` job used to run about once a minute.
+- The worker logs a warning when a handler returns a value that isn't JSON. Postgres and SQLite store its `str()`.
 - `Soniq.job()` now has a precise return type instead of `Any`. Type checkers now check direct calls to decorated jobs against the function signature. There is no runtime change.
 
 ### Fixed
 
+- Two `soniq scheduler` processes starting at the same time no longer register the same `@periodic` job twice. The duplicate row made the job fire twice per interval.
+- With the pytest plugin's `soniq` marker, `my_job.enqueue(...)` and your module-level `soniq.enqueue(...)` now go to the fixture. They used to write to the real database from the instance's `database_url`.
 - `enqueue(connection=conn)` no longer fails with `DataError: expected str, got dict` when `conn` comes from your own asyncpg pool or `asyncpg.connect()`. Soniq no longer needs its JSONB codec on the connection. Stored data is unchanged.
+- `soniq dead-letter cleanup --dry-run` deleted the jobs anyway. It now prints how many it would remove and deletes nothing.
+- `soniq scheduler` now stops cleanly on `SIGTERM` (Docker, Kubernetes, systemd), the same as on `Ctrl+C`. It used to die without stopping the scheduler loop.
+- The CLI no longer emits a `DeprecationWarning` for `asyncio.iscoroutinefunction` on Python 3.14.
 
 ## [0.0.5]
 
