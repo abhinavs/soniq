@@ -60,3 +60,39 @@ async def test_cli_app_closes_instance_on_exit(monkeypatch):
         assert isinstance(app, Soniq)
 
     assert closed == [app], "The CLI-owned instance should be closed on exit."
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (
+            "postgresql://u:s3cret@db:5432/app",
+            "postgresql://u:***@db:5432/app",
+        ),
+        (
+            "postgresql://db/app?user=u&password=s3cret&sslmode=require",
+            "postgresql://db/app?user=u&password=***&sslmode=require",
+        ),
+        ("postgresql://u@localhost/app", "postgresql://u@localhost/app"),
+        ("sqlite:///jobs.db", "sqlite:///jobs.db"),
+    ],
+)
+def test_redact_url_hides_the_password(url, expected):
+    from soniq.cli._helpers import redact_url
+
+    assert redact_url(url) == expected
+
+
+@pytest.mark.asyncio
+async def test_cli_app_does_not_print_the_password(monkeypatch, capsys):
+    from soniq import Soniq
+
+    monkeypatch.setattr(Soniq, "is_initialized", property(lambda self: False))
+    args = argparse.Namespace(database_url="postgresql://u:s3cret@localhost/db")
+
+    async with cli_app(args):
+        pass
+
+    out = capsys.readouterr().out
+    assert "s3cret" not in out
+    assert "postgresql://u:***@localhost/db" in out

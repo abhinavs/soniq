@@ -87,8 +87,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "${GITHUB_REF#refs/tags/}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF#refs/tags/}" \
-              --title "${GITHUB_REF#refs/tags/}" \
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Mark a1 / b2 / rc3 tags as pre-releases so /releases/latest
+          # keeps pointing at the last stable version.
+          PRERELEASE=""
+          if [[ "$TAG" =~ (a|b|rc)[0-9]+$ ]]; then
+            PRERELEASE="--prerelease"
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "$TAG" \
               --generate-notes \
+              $PRERELEASE \
               dist/*

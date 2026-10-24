@@ -554,6 +554,12 @@ class Scheduler:
     def running(self) -> bool:
         return self._running
 
+    @property
+    def check_interval(self) -> int:
+        """Seconds between ticks, after ``start()`` lowered it for short
+        ``every=`` schedules."""
+        return self._check_interval
+
     async def _register_decorated(self) -> None:
         registry = self._app.registry
         for job_name, meta in registry.list_jobs().items():

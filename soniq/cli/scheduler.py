@@ -86,6 +86,11 @@ async def handle_scheduler(args) -> int:
         signals.setup_signal_handlers(stop)
         try:
             await scheduler.start(check_interval=args.check_interval)
+            if scheduler.check_interval < args.check_interval:
+                print(
+                    f"Checking every {scheduler.check_interval}s instead, to keep "
+                    "up with the shortest every= schedule"
+                )
             while scheduler.running and not stop.is_set():
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=10)

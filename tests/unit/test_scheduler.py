@@ -233,6 +233,6 @@ async def test_check_interval_drops_to_shortest_every(app):
 
     await app.scheduler.start(check_interval=60)
     try:
-        assert app.scheduler._check_interval == 5
+        assert app.scheduler.check_interval == 5
     finally:
         await app.scheduler.stop()

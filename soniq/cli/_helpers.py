@@ -31,6 +31,7 @@ import importlib.util
 import logging
 import os
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import dotenv_values
 from pydantic import ValidationError
@@ -44,6 +45,34 @@ from soniq.discovery import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def redact_url(url: str) -> str:
+    """Return ``url`` with any password replaced by ``***``, for printing.
+
+    Covers ``user:secret@host`` and a ``?password=`` query parameter, the two
+    places asyncpg reads a password from.
+    """
+    try:
+        parts = urlsplit(url)
+        has_password = parts.password is not None
+    except ValueError:
+        return url
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    has_query_password = any(k == "password" for k, _ in query)
+    if not (has_password or has_query_password):
+        # urlunsplit would turn sqlite:///x.db into sqlite:/x.db.
+        return url
+    if has_password:
+        userinfo, _, hostinfo = parts.netloc.rpartition("@")
+        parts = parts._replace(netloc=f"{userinfo.partition(':')[0]}:***@{hostinfo}")
+    if has_query_password:
+        parts = parts._replace(
+            query=urlencode(
+                [(k, "***" if k == "password" else v) for k, v in query], safe="*"
+            )
+        )
+    return urlunsplit(parts)
 
 
 def database_url_argument(parser) -> None:
@@ -114,17 +143,19 @@ async def resolve_soniq_instance(args: Any) -> Optional[Soniq]:
             if "database_url" in str(e):
                 if "postgresql" in str(e).lower():
                     raise ValueError(
-                        f"Invalid database URL: {args.database_url}\n"
+                        f"Invalid database URL: {redact_url(args.database_url)}\n"
                         "Soniq requires PostgreSQL URLs like: "
                         "postgresql://user:password@localhost/database"
                     )
-                raise ValueError(f"Invalid database URL: {args.database_url}")
+                raise ValueError(
+                    f"Invalid database URL: {redact_url(args.database_url)}"
+                )
             raise ValueError(f"Configuration error: {e}")
         except Exception as e:
             msg = str(e).lower()
             if "connect" in msg or "connection" in msg:
                 raise ValueError(
-                    f"Can't connect to database: {args.database_url}\n"
+                    f"Can't connect to database: {redact_url(args.database_url)}\n"
                     "Make sure PostgreSQL is running and the URL is correct"
                 )
             raise ValueError(f"Database configuration error: {e}")
@@ -254,7 +285,7 @@ def load_app(args: Any) -> Optional[Soniq]:
     if url and url != app.settings.database_url:
         if app.is_initialized or app.backend is not None:
             raise _app_error(
-                f"can't point app '{path}' at {url}: the instance already has a "
+                f"can't point app '{path}' at {redact_url(url)}: the instance already has a "
                 "backend. Remove --database-url / SONIQ_DATABASE_URL, or build "
                 "the instance without a backend."
             )
@@ -263,5 +294,5 @@ def load_app(args: Any) -> Optional[Soniq]:
                 {**app.settings.model_dump(), "database_url": url}
             )
         except ValidationError:
-            raise ValueError(f"Invalid database URL: {url}")
+            raise ValueError(f"Invalid database URL: {redact_url(url)}")
     return app
