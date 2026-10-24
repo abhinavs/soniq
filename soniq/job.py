@@ -2,10 +2,11 @@
 Job model, status enum, and runtime context.
 """
 
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -70,3 +71,23 @@ class JobContext:
     worker_id: str = ""
     scheduled_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+
+
+def context_param(func: Callable[..., Any]) -> Optional[str]:
+    """Return the name of ``func``'s ``JobContext`` parameter, if it has one.
+
+    With ``from __future__ import annotations`` every annotation is a
+    string, so resolve them first. If that fails (say the import sits under
+    ``TYPE_CHECKING``), fall back to matching the name as written.
+    """
+    try:
+        sig = inspect.signature(func, eval_str=True)
+    except Exception:
+        sig = inspect.signature(func)
+    for name, param in sig.parameters.items():
+        ann = param.annotation
+        if ann is JobContext or (
+            isinstance(ann, str) and ann.rpartition(".")[2] == "JobContext"
+        ):
+            return name
+    return None

@@ -47,7 +47,7 @@ from .features.logging import LogService
 from .features.scheduler import Scheduler, _coerce_schedule
 from .features.signing import SigningService
 from .features.webhooks import HTTPTransport, WebhookService
-from .job import JobContext
+from .job import context_param
 from .observability.metrics import DEFAULT_METRICS_SINK
 from .plugin import (
     PluginCLI,
@@ -100,9 +100,11 @@ def _check_job_args(
         ) from e
     if not check_signature or job_meta is None or job_meta.get("args_model"):
         return
-    sig = inspect.signature(job_meta["func"])
+    func = job_meta["func"]
+    sig = inspect.signature(func)
     # The worker injects JobContext itself, so callers never pass it.
-    params = [p for p in sig.parameters.values() if p.annotation is not JobContext]
+    ctx_name = context_param(func)
+    params = [p for p in sig.parameters.values() if p.name != ctx_name]
     try:
         sig.replace(parameters=params).bind(**args)
     except TypeError as e:

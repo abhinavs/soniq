@@ -27,6 +27,7 @@ No schema change is needed. Rows written by 0.1.0 are still processed, and 0.1.0
 
 ### Fixed
 
+- A `ctx: JobContext` parameter now works in modules that use `from __future__ import annotations`. Before, the annotation was a string, so the worker never passed the context and `enqueue` rejected the job with "missing a required argument: 'ctx'".
 - Dead-letter `tags` passed to the Postgres backend were encoded twice and stored as a JSON string instead of an object.
 
 ### Added

@@ -18,7 +18,7 @@ from typing import Any, List, Optional
 from soniq.core.middleware import build_chain
 from soniq.core.registry import JobRegistry
 from soniq.core.retry import DEFAULT_RETRY_POLICY
-from soniq.job import JobContext, Snooze
+from soniq.job import JobContext, Snooze, context_param
 from soniq.observability.metrics import DEFAULT_METRICS_SINK
 from soniq.settings import SoniqSettings
 
@@ -97,7 +97,6 @@ async def _execute_job_safely(
     # Inject JobContext if the function signature has it
 
     func = job_meta["func"]
-    sig = inspect.signature(func)
     ctx = JobContext(
         job_id=str(job_record["id"]),
         job_name=job_record["job_name"],
@@ -108,10 +107,9 @@ async def _execute_job_safely(
         scheduled_at=job_record.get("scheduled_at"),
         created_at=job_record.get("created_at"),
     )
-    for param_name, param in sig.parameters.items():
-        if param.annotation is JobContext:
-            validated_args[param_name] = ctx
-            break
+    ctx_name = context_param(func)
+    if ctx_name is not None:
+        validated_args[ctx_name] = ctx
 
     # Determine timeout: per-job overrides instance setting
     timeout = job_meta.get("timeout")
