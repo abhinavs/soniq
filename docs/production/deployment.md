@@ -1,8 +1,12 @@
-# Deployment
+---
+description: Deploy Soniq workers, the scheduler and the dashboard on PostgreSQL with systemd, Docker Compose, Kubernetes or Supervisor, plus queue routing and sizing.
+---
 
-Pick a process supervisor, drop in the config for your shape, run `soniq setup` once. That is the whole story.
+# Deploy Soniq workers and the scheduler
 
-Ready-to-use configuration files live in the [`deployment/`](../../deployment/) directory of the repo.
+Pick a process manager, use the config for your shape, and run `soniq setup` once per deploy. Soniq does not care which manager supervises it. It needs `SIGTERM` for a graceful stop and a long enough grace window.
+
+Ready-to-use configuration files are in the [`deployment/`](https://github.com/abhinavs/soniq/tree/main/deployment) directory of the repo.
 
 ## Pick a shape
 
@@ -13,20 +17,20 @@ Ready-to-use configuration files live in the [`deployment/`](../../deployment/) 
 | [Kubernetes](deployment-kubernetes.md) | Container platforms, autoscaling | `deployment/kubernetes.yaml` |
 | [Supervisor](deployment-supervisor.md) | Older setups, shared environments | `deployment/supervisor.conf` |
 
-The four shapes are interchangeable. Soniq itself does not care which one supervises it - all it asks for is `SIGTERM` for graceful stop and a long enough grace window.
+The four shapes are interchangeable. For services that only enqueue jobs, see [deployment shapes](deployment-shapes.md).
 
 ## Prerequisites
 
 **Minimum:**
 
 - Python 3.10+
-- PostgreSQL 12+
+- PostgreSQL 15+ (CI runs 15 and 18; `soniq setup` warns on 14 and older)
 - 2 GB RAM, 2 CPU cores
 
 **Recommended for production:**
 
 - Python 3.12+
-- PostgreSQL 15+
+- PostgreSQL 18
 - 4 GB+ RAM, 4+ CPU cores
 - SSD storage for the database
 
@@ -35,13 +39,13 @@ The four shapes are interchangeable. Soniq itself does not care which one superv
 ```bash
 createdb soniq_prod
 psql -c "CREATE USER soniq WITH PASSWORD 'your_secure_password';"
-psql -c "GRANT ALL PRIVILEGES ON DATABASE soniq_prod TO soniq;"
+psql -c "ALTER DATABASE soniq_prod OWNER TO soniq;"
 
 export SONIQ_DATABASE_URL="postgresql://soniq:your_secure_password@localhost/soniq_prod"
 soniq setup
 ```
 
-Run `soniq setup` once per deploy, not from every replica's startup. See [going to production](going-to-production.md).
+On PostgreSQL 15 and newer, `GRANT ALL PRIVILEGES ON DATABASE` is not enough, because the `public` schema is no longer writable by every role. The `ALTER DATABASE ... OWNER` command above gives the `soniq` role the schema rights `soniq setup` needs. Run `soniq setup` once per deploy, not from every replica's startup. See [going to production](going-to-production.md).
 
 ### Application user (Linux)
 
@@ -55,9 +59,9 @@ sudo chown soniq:soniq /opt/soniq /var/log/soniq
 
 If your application uses `@soniq.periodic(...)` jobs, deploy a separate `soniq scheduler` process alongside `soniq worker`. The worker process **does not** evaluate due recurring jobs - that responsibility lives with the scheduler so worker scaling does not duplicate scheduler work.
 
-If `soniq worker` finds `@periodic` decorators registered and no scheduler-sidecar process holds the leadership lock, it prints a one-time WARN at startup. To silence the WARN once you have configured the sidecar (or if you intentionally do not run recurring jobs), set `SONIQ_SCHEDULER_SUPPRESS_WARNING=1` in the worker environment.
+If `soniq worker` finds `@periodic` decorators and no scheduler, it prints a one-time warning at startup. To silence the warning, set `SONIQ_SCHEDULER_SUPPRESS_WARNING=1` in the worker environment. Do this after you configure the sidecar, or if you intentionally run no recurring jobs.
 
-The scheduler is a standard subcommand (`soniq scheduler`); it is not a separate package and shares the same `soniq` CLI entry point. Multiple instances coordinate via the `soniq.maintenance` Postgres advisory lock - duplicates are safe but only one is needed.
+The scheduler is the `soniq scheduler` subcommand. It is part of the same `soniq` package. Extra instances are safe because they take turns as leader through a Postgres advisory lock, but one instance is enough.
 
 The shipped deployment templates include the sidecar:
 
@@ -78,7 +82,7 @@ soniq worker --concurrency=8 --queues=emails,notifications
 soniq worker --concurrency=2 --queues=media,transcode
 ```
 
-In Kubernetes, use separate Deployments. In Docker Compose, use separate services. In Supervisor, use separate `[program:]` blocks. See the `deployment/` directory for examples with queue routing already configured.
+In Kubernetes, use separate Deployments. In Docker Compose, use separate services. In Supervisor, use separate `[program:]` blocks. The `deployment/` directory has examples with queue routing.
 
 ## Performance tuning
 
@@ -90,13 +94,13 @@ In Kubernetes, use separate Deployments. In Docker Compose, use separate service
 
 ### Graceful shutdown
 
-Always stop workers with `SIGTERM`, not `SIGKILL`. Soniq handles `SIGTERM` by finishing in-flight jobs before exiting.
+Stop workers with `SIGTERM`, not `SIGKILL`. On `SIGTERM`, the worker stops claiming jobs and waits for in-flight jobs for up to `SONIQ_SHUTDOWN_TIMEOUT` seconds (default 30). After that, it returns unfinished async jobs to `queued`. Sync handlers get a further `SONIQ_SYNC_HANDLER_GRACE_SECONDS` (default: the job timeout). To let long async jobs finish, raise `SONIQ_SHUTDOWN_TIMEOUT` and the grace window below together.
 
-- **Systemd:** Set `TimeoutStopSec` to match your longest job timeout plus a buffer.
-- **Kubernetes:** Set `terminationGracePeriodSeconds` the same way. Default is 30s, which is too short for most production workloads.
+- **systemd:** Set `TimeoutStopSec` to your longest job timeout plus a buffer.
+- **Kubernetes:** Set `terminationGracePeriodSeconds` the same way. The default is 30 seconds, which is too short for most production workloads.
 - **Supervisor:** Set `stopwaitsecs` in the program config.
 
-If a worker is killed with `SIGKILL` (or OOM-killed), its in-flight jobs become stuck. See the [reliability guide](reliability.md) for recovery.
+A worker that receives `SIGKILL` or an out-of-memory kill leaves its in-flight jobs stuck in `processing`. See the [reliability guide](reliability.md) for recovery.
 
 ### Database connection pressure
 
@@ -107,3 +111,8 @@ total_connections = num_workers * pool_max_size
 ```
 
 Make sure your PostgreSQL `max_connections` can handle this, with room for your application and admin connections. See [PostgreSQL tuning](postgres.md) for pool sizing details.
+
+## Next steps
+
+- [Going to production](going-to-production.md) - the full checklist
+- [Reliability](reliability.md) - crash recovery and delivery guarantees

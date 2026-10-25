@@ -16,7 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [ -z "${SONIQ_DATABASE_URL:-}" ]; then
-  container="$(docker run -d -p 55432:5432 -e POSTGRES_PASSWORD=postgres postgres:16)"
+  container="$(docker run -d -p 55432:5432 -e POSTGRES_PASSWORD=postgres postgres:18)"
   export SONIQ_DATABASE_URL="postgresql://postgres:postgres@localhost:55432/postgres"
   for _ in $(seq 30); do
     docker exec "$container" pg_isready -U postgres >/dev/null 2>&1 && break

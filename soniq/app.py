@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
@@ -31,7 +32,7 @@ from .backends.postgres import PostgresBackend
 from .backends.postgres.migration_runner import MigrationRunner
 from .backends.sqlite import SQLiteBackend
 from .core.naming import validate_task_name
-from .core.queue import _normalize_scheduled_time
+from .core.queue import _normalize_scheduled_time, validation_summary
 from .core.registry import JobRegistry
 from .core.retry import DEFAULT_RETRY_POLICY
 from .core.worker import Worker
@@ -139,7 +140,7 @@ def _pool_sizing_error(
         f"Connection pool too small: worker concurrency ({concurrency}) "
         f"plus reserved headroom ({pool_headroom}) requires {required} "
         f"connections, but pool_max_size is {pool_max_size}. "
-        f"Raise SONIQ_POOL_MAX_SIZE, lower SONIQ_CONCURRENCY, "
+        f"Raise SONIQ_POOL_MAX_SIZE, lower --concurrency, "
         f"or reduce SONIQ_POOL_HEADROOM.",
         "SONIQ_POOL_TOO_SMALL",
         context={
@@ -685,7 +686,7 @@ class Soniq:
                 ref.args_model(**args)
             except ValidationError as e:
                 raise SoniqError(
-                    f"Invalid arguments for task {job_name!r}: {e}",
+                    f"Invalid arguments for task {job_name!r}: {validation_summary(e)}",
                     SONIQ_TASK_ARGS_INVALID,
                     context={"task_name": job_name},
                 ) from e
@@ -727,7 +728,7 @@ class Soniq:
                     args_model(**args)
                 except ValidationError as e:
                     raise SoniqError(
-                        f"Invalid arguments for task {job_name!r}: {e}",
+                        f"Invalid arguments for task {job_name!r}: {validation_summary(e)}",
                         SONIQ_TASK_ARGS_INVALID,
                         context={"task_name": job_name},
                     ) from e
@@ -753,7 +754,11 @@ class Soniq:
             max_attempts = self._settings.max_retries + 1
 
         scheduled_at = _normalize_scheduled_time(scheduled_at)
-        args_hash = compute_args_hash(args) if final_unique else None
+        # Hash the args as they will be stored: {1: "a"} is stored as
+        # {"1": "a"}, and mixed int/str keys can't be sorted as-is.
+        args_hash = (
+            compute_args_hash(json.loads(to_json(args))) if final_unique else None
+        )
         job_id = str(uuid.uuid4())
 
         producer_id = resolve_producer_id(self._settings.producer_id)
@@ -770,6 +775,21 @@ class Soniq:
                     from .integrations.sqlalchemy import to_asyncpg_connection
 
                     connection = await to_asyncpg_connection(connection)
+                elif (
+                    isinstance(connection, asyncpg.Connection)
+                    and not connection.is_in_transaction()
+                ):
+                    # Same rule as the SQLAlchemy path: outside a transaction
+                    # the insert would autocommit and not be atomic.
+                    raise SoniqError(
+                        "The asyncpg connection passed as enqueue(connection=...) "
+                        "has no active transaction, so the job would not be "
+                        "atomic with your writes.",
+                        "SONIQ_UNSUPPORTED_CONNECTION",
+                        suggestions=[
+                            "Call enqueue() inside 'async with conn.transaction():'."
+                        ],
+                    )
                 txn_id = await self._backend.create_job_transactional(
                     connection=connection,
                     job_id=job_id,
@@ -859,7 +879,7 @@ class Soniq:
                     ref.args_model(**args)
                 except ValidationError as e:
                     raise SoniqError(
-                        f"Invalid arguments for task {job_name!r} at index {i}: {e}",
+                        f"Invalid arguments for task {job_name!r} at index {i}: {validation_summary(e)}",
                         SONIQ_TASK_ARGS_INVALID,
                         context={"task_name": job_name, "index": i},
                     ) from e
@@ -903,7 +923,7 @@ class Soniq:
                         args_model(**args)
                     except ValidationError as e:
                         raise SoniqError(
-                            f"Invalid arguments for task {job_name!r} at index {i}: {e}",
+                            f"Invalid arguments for task {job_name!r} at index {i}: {validation_summary(e)}",
                             SONIQ_TASK_ARGS_INVALID,
                             context={"task_name": job_name, "index": i},
                         ) from e

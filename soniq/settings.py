@@ -44,6 +44,13 @@ class SoniqSettings(BaseSettings):
         extra="ignore",
     )
 
+    def __repr_args__(self):
+        # Keep the DB password out of repr/str (logs, tracebacks, debuggers).
+        from soniq.cli._helpers import redact_url
+
+        for name, value in super().__repr_args__():
+            yield name, redact_url(value) if name == "database_url" else value
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -78,12 +85,15 @@ class SoniqSettings(BaseSettings):
 
     # Worker Configuration
     concurrency: int = Field(
-        default=4, ge=1, le=100, description="Default number of concurrent workers"
+        default=4,
+        ge=1,
+        le=100,
+        description="Not read by the worker. Use --concurrency or run_worker(concurrency=)",
     )
 
     queues: List[str] = Field(
         default=["default"],
-        description="Default queues to process (when not using dynamic discovery)",
+        description="Not read by the worker. Use --queues or run_worker(queues=)",
     )
 
     # Job Processing Settings
@@ -98,7 +108,7 @@ class SoniqSettings(BaseSettings):
         default=100,
         ge=1,
         le=1000,
-        description="Default job priority (lower = higher priority)",
+        description="Not read by enqueue. Use priority= on @soniq.job() or enqueue",
     )
 
     enqueue_validation: Literal["strict", "warn", "none"] = Field(

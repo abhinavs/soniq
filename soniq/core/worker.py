@@ -209,9 +209,7 @@ class Worker:
                 queues=queues or [],
                 concurrency=concurrency,
             )
-            heartbeat_task = asyncio.create_task(
-                self._heartbeat_loop(worker_id, shutdown_event)
-            )
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(worker_id))
 
         # Per-worker-task in-flight slot. The processor populates each slot
         # at claim time so the shutdown state machine can pick the
@@ -477,12 +475,15 @@ class Worker:
         )
         await asyncio.gather(*sync_jobs, return_exceptions=True)
 
-    async def _heartbeat_loop(
-        self, worker_id: str, shutdown_event: asyncio.Event
-    ) -> None:
-        """Send periodic heartbeat updates."""
+    async def _heartbeat_loop(self, worker_id: str) -> None:
+        """Send periodic heartbeat updates.
+
+        Runs until cancelled, which happens after in-flight jobs drain on
+        shutdown. Stopping at the shutdown signal would let a long drain go
+        stale and another worker run the same job again.
+        """
         interval = self._settings.heartbeat_interval
-        while not shutdown_event.is_set():
+        while True:
             try:
                 await self._backend.update_heartbeat(worker_id)
                 await asyncio.sleep(interval)

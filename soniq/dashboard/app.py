@@ -10,8 +10,19 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
+from soniq.features.dead_letter import _tags
+
 if TYPE_CHECKING:
     from soniq.app import Soniq
+
+
+# Upper bound for any single dashboard query.
+_STATEMENT_TIMEOUT_MS = 15000
+
+
+def _like_escape(text: str) -> str:
+    """Make ``%``, ``_`` and ``\\`` match themselves in an ILIKE pattern."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class DashboardService:
@@ -31,7 +42,14 @@ class DashboardService:
     async def _acquire(self) -> AsyncIterator[Any]:
         await self._app.ensure_initialized()
         async with self._app.backend.acquire() as conn:
-            yield conn
+            # Bound every dashboard query so a slow search can't hold a pool
+            # connection. SET LOCAL ends with the transaction, so the setting
+            # never leaks back into the pool.
+            async with conn.transaction():
+                await conn.execute(
+                    f"SET LOCAL statement_timeout = {_STATEMENT_TIMEOUT_MS}"
+                )
+                yield conn
 
     async def get_job_stats(self) -> Dict[str, int]:
         async with self._acquire() as conn:
@@ -99,7 +117,7 @@ class DashboardService:
                     COUNT(*) FILTER (WHERE j.status = 'processing') AS processing,
                     COUNT(*) FILTER (WHERE j.status = 'done')       AS done,
                     COUNT(*) FILTER (WHERE j.status = 'cancelled')  AS cancelled,
-                    AVG(GREATEST(EXTRACT(EPOCH FROM (j.updated_at - j.created_at)) * 1000, 0))
+                    AVG(GREATEST(EXTRACT(EPOCH FROM (j.updated_at - j.created_at)) OPERATOR(pg_catalog.*) 1000, 0))
                         FILTER (WHERE j.status = 'done')            AS avg_processing_time_ms
                 FROM soniq_jobs j
                 GROUP BY j.queue
@@ -115,6 +133,7 @@ class DashboardService:
             )
             dlq_by_queue = {r["queue"]: int(r["dead_letter"]) for r in dlq_rows}
             results: List[Dict[str, Any]] = []
+            seen = {r["queue"] for r in rows}
             for row in rows:
                 d = dict(row)
                 d["avg_processing_time_ms"] = (
@@ -125,11 +144,11 @@ class DashboardService:
                 d["dead_letter"] = dlq_by_queue.get(d["queue"], 0)
                 results.append(d)
             for queue, count in dlq_by_queue.items():
-                if not any(r["queue"] == queue for r in results):
+                if queue not in seen:
                     results.append(
                         {
                             "queue": queue,
-                            "total_jobs": count,
+                            "total_jobs": 0,
                             "queued": 0,
                             "processing": 0,
                             "done": 0,
@@ -138,6 +157,7 @@ class DashboardService:
                             "avg_processing_time_ms": None,
                         }
                     )
+            results.sort(key=lambda r: -r["total_jobs"])
             return results
 
     async def get_job_metrics(self, hours: int = 24) -> Dict[str, Any]:
@@ -150,17 +170,17 @@ class DashboardService:
                 """
                 SELECT
                     COUNT(*) as successful,
-                    AVG(GREATEST(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000, 0))
+                    AVG(GREATEST(EXTRACT(EPOCH FROM (updated_at - created_at)) OPERATOR(pg_catalog.*) 1000, 0))
                         as avg_processing_time_ms
                 FROM soniq_jobs
-                WHERE status = 'done' AND updated_at >= NOW() - make_interval(hours => $1)
+                WHERE status = 'done' AND updated_at >= NOW() - pg_catalog.make_interval(hours => $1)
                 """,
                 hours,
             )
             dead_lettered = await conn.fetchval(
                 """
                 SELECT COUNT(*) FROM soniq_dead_letter_jobs
-                WHERE moved_to_dead_letter_at >= NOW() - make_interval(hours => $1)
+                WHERE moved_to_dead_letter_at >= NOW() - pg_catalog.make_interval(hours => $1)
                   AND resurrection_count = 0
                 """,
                 hours,
@@ -215,17 +235,39 @@ class DashboardService:
         new_job_id: Optional[str] = await self._app.dead_letter.replay(dead_letter_id)
         return new_job_id
 
-    async def delete_job(self, job_id: str) -> bool:
+    async def get_dead_letter_job_exists(self, dead_letter_id: str) -> bool:
+        try:
+            dl_uuid = uuid.UUID(dead_letter_id)
+        except ValueError:
+            return False
+        async with self._acquire() as conn:
+            return bool(
+                await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM soniq_dead_letter_jobs WHERE id = $1)",
+                    dl_uuid,
+                )
+            )
+
+    async def delete_job(self, job_id: str) -> str:
+        """Returns "deleted", "processing" (left alone) or "missing"."""
         async with self._acquire() as conn:
             try:
                 job_uuid = uuid.UUID(job_id)
             except ValueError:
-                return False
-            result = await conn.execute(
-                "DELETE FROM soniq_jobs WHERE id = $1",
+                return "missing"
+            # A running job has a worker holding it; deleting the row would
+            # let it finish with nowhere to record the result.
+            deleted = await conn.fetchval(
+                "DELETE FROM soniq_jobs WHERE id = $1 AND status <> 'processing' "
+                "RETURNING id",
                 job_uuid,
             )
-            return result == "DELETE 1"  # type: ignore[no-any-return]
+            if deleted:
+                return "deleted"
+            exists = await conn.fetchval(
+                "SELECT 1 FROM soniq_jobs WHERE id = $1", job_uuid
+            )
+            return "processing" if exists else "missing"
 
     async def cancel_job(self, job_id: str) -> bool:
         async with self._acquire() as conn:
@@ -249,9 +291,7 @@ class DashboardService:
         async with self._acquire() as conn:
             active_jobs = await conn.fetchval(
                 """
-                SELECT COUNT(*) FROM soniq_jobs
-                WHERE status = 'queued'
-                AND updated_at > NOW() - INTERVAL '5 minutes'
+                SELECT COUNT(*) FROM soniq_jobs WHERE status = 'processing'
                 """
             )
             recent_activity = await conn.fetchrow(
@@ -291,19 +331,20 @@ class DashboardService:
                        SUM(dead) as dead_letter
                 FROM (
                     SELECT DATE_TRUNC('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' as hour, 1 as enqueued, 0 as done, 0 as dead
-                    FROM soniq_jobs WHERE created_at >= NOW() - make_interval(hours => $1)
+                    FROM soniq_jobs WHERE created_at >= NOW() - pg_catalog.make_interval(hours => $1)
                     UNION ALL
                     SELECT DATE_TRUNC('hour', original_created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 1, 0, 0
                     FROM soniq_dead_letter_jobs
-                    WHERE original_created_at >= NOW() - make_interval(hours => $1)
+                    WHERE original_created_at >= NOW() - pg_catalog.make_interval(hours => $1)
                     UNION ALL
                     SELECT DATE_TRUNC('hour', updated_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 0, 1, 0
                     FROM soniq_jobs
-                    WHERE status = 'done' AND updated_at >= NOW() - make_interval(hours => $1)
+                    WHERE status = 'done' AND updated_at >= NOW() - pg_catalog.make_interval(hours => $1)
                     UNION ALL
                     SELECT DATE_TRUNC('hour', moved_to_dead_letter_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 0, 0, 1
                     FROM soniq_dead_letter_jobs
-                    WHERE moved_to_dead_letter_at >= NOW() - make_interval(hours => $1)
+                    WHERE moved_to_dead_letter_at >= NOW() - pg_catalog.make_interval(hours => $1)
+                      AND resurrection_count = 0
                 ) t
                 GROUP BY hour
                 ORDER BY hour ASC
@@ -331,7 +372,7 @@ class DashboardService:
                     COUNT(*) as total_count,
                     COUNT(*) FILTER (WHERE status = 'done') as completed_count,
                     COUNT(*) FILTER (WHERE status = 'queued') as queued_count,
-                    AVG(GREATEST(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000, 0))
+                    AVG(GREATEST(EXTRACT(EPOCH FROM (updated_at - created_at)) OPERATOR(pg_catalog.*) 1000, 0))
                         FILTER (WHERE status = 'done') as avg_processing_time_ms,
                     MAX(updated_at) as last_run
                 FROM soniq_jobs
@@ -418,14 +459,14 @@ class DashboardService:
             if job_name:
                 param_count += 1
                 conditions.append(f"job_name ILIKE ${param_count}")
-                params.append(f"%{job_name}%")
+                params.append(f"%{_like_escape(job_name)}%")
 
             if query:
                 param_count += 1
                 conditions.append(
                     f"(job_name ILIKE ${param_count} OR last_error ILIKE ${param_count})"
                 )
-                params.append(f"%{query}%")
+                params.append(f"%{_like_escape(query)}%")
 
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -457,13 +498,22 @@ class DashboardService:
             }
 
     async def get_system_health(self) -> Dict[str, Any]:
-        async with self._acquire() as conn:
-            db_healthy = True
-            try:
+        # A down database is the case this endpoint reports, so the
+        # connection attempt itself belongs inside the try.
+        try:
+            async with self._acquire() as conn:
                 await conn.fetchval("SELECT 1")
-            except Exception:
-                db_healthy = False
-
+        except Exception:
+            return {
+                "status": "unhealthy",
+                "database_healthy": False,
+                "queue_backlog": None,
+                "error_rate_last_hour": 0.0,
+                "jobs_processed_last_hour": 0,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        db_healthy = True
+        async with self._acquire() as conn:
             backlog = await conn.fetchval(
                 "SELECT COUNT(*) FROM soniq_jobs WHERE status = 'queued'"
             )
@@ -578,8 +628,11 @@ class DashboardService:
                 limit,
                 offset,
             )
+            jobs = [dict(row) for row in rows]
+            for job in jobs:
+                job["tags"] = _tags(job["tags"])
             return {
-                "jobs": [dict(row) for row in rows],
+                "jobs": jobs,
                 "total_count": int(total or 0),
                 "limit": limit,
                 "offset": offset,

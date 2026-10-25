@@ -166,12 +166,15 @@ async def test_plain_asyncpg_connection_without_codec(soniq):
             job_id = await soniq.enqueue(
                 "sa_send_invoice", connection=conn, args={"order_id": 4}
             )
-        unique_id = await soniq.enqueue(
-            "sa_send_invoice", connection=conn, args={"order_id": 5}, unique=True
-        )
-        dedup_id = await soniq.enqueue(
-            "sa_send_invoice", connection=conn, args={"order_id": 6}, dedup_key="k6"
-        )
+            unique_id = await soniq.enqueue(
+                "sa_send_invoice", connection=conn, args={"order_id": 5}, unique=True
+            )
+            dedup_id = await soniq.enqueue(
+                "sa_send_invoice",
+                connection=conn,
+                args={"order_id": 6},
+                dedup_key="k6",
+            )
     finally:
         await conn.close()
     assert await _job_args(soniq, job_id) == {"order_id": 4}

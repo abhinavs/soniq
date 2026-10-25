@@ -1,4 +1,8 @@
-# Dead-letter queue
+---
+description: Python API for the Soniq dead-letter queue on PostgreSQL. List, replay, delete, tag, export and measure Python background jobs that exhausted every retry.
+---
+
+# Dead-letter queue Python API
 
 The `DeadLetterService` handles jobs that exhausted every retry. It is reached
 through your `Soniq` instance as `soniq.dead_letter` - the handle is built lazily
@@ -63,7 +67,7 @@ frozen-shaped `@dataclass`.
 | `priority` | `int` | Original priority. |
 | `max_attempts` | `int` | Attempt cap the job had. |
 | `attempts` | `int` | How many times it actually ran. |
-| `last_error` | `str` | Exception message from the final attempt. |
+| `last_error` | `str` | Exception message from the final attempt. For a job that ran out of retries, Soniq prefixes it with `Max retries exceeded: `. |
 | `dead_letter_reason` | `str` | Why it landed here (`max_retries_exceeded`, `permanent_failure`, `job_not_found`, `invalid_arguments`, `timeout`, `resource_exhausted`, `manual_move`). |
 | `original_created_at` | `datetime` | When the job was first enqueued. |
 | `moved_to_dead_letter_at` | `datetime` | When it entered the DLQ. |
@@ -93,7 +97,7 @@ Return dead-letter rows, newest first. With no filter, returns up to the
 async def get_dead_letter_job(dead_letter_id: str) -> DeadLetterJob | None
 ```
 
-Fetch a single row by id. `None` if it does not exist.
+Fetch a single row by id. `None` if it does not exist. An id that is not a valid UUID raises `ValueError`.
 
 ### replay
 
@@ -113,12 +117,12 @@ as the audit trail, so the same row can be replayed more than once. Returns the
 new job's UUID, or `None` if the id is unknown **or the target job is not
 registered on this `Soniq` instance** - the registry lookup is how `replay`
 knows the new row's attempt cap, so the job's module must be imported first
-(this is why `soniq dead-letter replay` needs `--jobs-modules`).
+(this is why `soniq dead-letter replay` needs `--jobs-modules`). Replay needs the PostgreSQL backend. An invalid UUID raises `ValueError`.
 
 | Argument | Default | Effect |
 |---|---|---|
 | `reset_attempts` | `True` | Start the new job at `attempts=0`. `False` carries the old count over. |
-| `new_max_attempts` | `None` | Override the attempt cap for the replayed job. |
+| `new_max_attempts` | `None` | Override the attempt cap for the replayed job. `0` counts as unset. |
 | `new_priority` | `None` | Override the priority. |
 | `new_queue` | `None` | Route the replayed job to a different queue. |
 
@@ -139,7 +143,7 @@ async def bulk_replay(
 ```
 
 Replay every row matching the filter. Rows whose job is unregistered are skipped
-(logged, not raised). Returns the list of new job UUIDs.
+(logged, not raised). A replay that fails with an exception is also logged and skipped. The filter `limit` (default 1000) caps the number of rows. Returns the list of new job UUIDs.
 
 ### delete_dead_letter_job
 
@@ -147,7 +151,7 @@ Replay every row matching the filter. Rows whose job is unregistered are skipped
 async def delete_dead_letter_job(dead_letter_id: str) -> bool
 ```
 
-Permanently remove one dead-letter row. `True` if a row was deleted.
+Permanently remove one dead-letter row. `True` if a row was deleted. An invalid UUID raises `ValueError`.
 
 ### bulk_delete
 
@@ -161,11 +165,11 @@ empty filter deletes the whole table, so pass a real filter.
 ### cleanup_old_dead_letter_jobs
 
 ```python
-async def cleanup_old_dead_letter_jobs(days: int = 30) -> int
+async def cleanup_old_dead_letter_jobs(days: int = 30, dry_run: bool = False) -> int
 ```
 
 Delete rows older than `days` (by `moved_to_dead_letter_at`). Returns the count
-deleted. Good for a `@soniq.periodic` housekeeping job.
+deleted. With `dry_run=True`, it deletes nothing and returns the count that it would delete. Good for a `@soniq.periodic` housekeeping job.
 
 ### get_dead_letter_stats
 
@@ -174,9 +178,9 @@ async def get_dead_letter_stats(hours: int | None = None) -> DeadLetterStats
 ```
 
 Aggregate counts over the whole table, or the last `hours` if given.
-`DeadLetterStats` has: `total_count`, `by_job_name`, `by_queue`, `by_reason`,
+`by_date` always covers the last 7 days, whatever `hours` is. `DeadLetterStats` has: `total_count`, `by_job_name`, `by_queue`, `by_reason`,
 `by_date` (all `dict[str, int]`), `oldest_job_age_hours` (`float`), and
-`resurrection_success_rate` (`float`). Point your DLQ alerting at this.
+`resurrection_success_rate` (`float`, a percentage from 0 to 100: the share of rows replayed at least once). Point your DLQ alerting at this.
 
 ### add_tags_to_job
 
@@ -193,8 +197,10 @@ Filter on them later with `DeadLetterFilter(tags={...})`.
 async def export_dead_letter_jobs(
     filter_criteria: DeadLetterFilter | None = None,
     format: str = "json",
+    output: str | None = None,
 ) -> str
 ```
 
-Write matching rows to a timestamped file (`"json"` or `"csv"`) in the current
-directory and return the filename.
+Write matching rows to `output` (`"json"` or `"csv"`) and return the path. Any other format raises `ValueError`. The filter `limit` caps the rows. Soniq creates the file with mode 0600 and refuses to write through a symlink. Without
+`output`, it writes a timestamped file in the current directory. An empty CSV
+export still gets its header row.

@@ -150,6 +150,25 @@ def test_can_write_needs_both_env_vars(monkeypatch):
 
     monkeypatch.setenv("SONIQ_DASHBOARD_WRITE_ENABLED", "true")
     monkeypatch.delenv("SONIQ_DASHBOARD_API_KEY", raising=False)
-    without_key = get_dashboard_html()
+    without_key = get_dashboard_html("")
     monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", "k")
-    assert get_dashboard_html() != without_key
+    assert get_dashboard_html("k") != without_key
+
+
+@pytest.mark.asyncio
+async def test_dashboard_queries_run_under_a_statement_timeout():
+    import os
+
+    from soniq.dashboard.app import DashboardService
+
+    url = os.environ.get("SONIQ_DATABASE_URL")
+    if not url:
+        pytest.skip("needs SONIQ_DATABASE_URL")
+    a = Soniq(database_url=url)
+    try:
+        async with DashboardService(a)._acquire() as conn:
+            assert await conn.fetchval("SHOW statement_timeout") == "15s"
+        async with a.backend.acquire() as conn:
+            assert await conn.fetchval("SHOW statement_timeout") != "15s"
+    finally:
+        await a.close()

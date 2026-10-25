@@ -19,6 +19,7 @@ import asyncpg
 import pytest
 
 from soniq.backends.postgres import PostgresBackend
+from soniq.backends.postgres.migration_runner import run_migrations
 from tests.db_utils import TEST_DATABASE_URL
 
 pytestmark = pytest.mark.skipif(
@@ -31,6 +32,8 @@ pytestmark = pytest.mark.skipif(
 async def backend():
     b = PostgresBackend(database_url=TEST_DATABASE_URL)
     await b.initialize()
+    async with b.acquire() as conn:
+        await run_migrations(conn)
     yield b
     await b.reset()
     await b.close()

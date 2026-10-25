@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 from soniq.discovery import discover_and_import_modules
 
 from ._context import cli_app, execution_app
@@ -17,7 +19,8 @@ def add_dashboard_cmd(subparsers) -> None:
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=6161, help="Port to bind to")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    # Kept so 0.0.5 scripts that pass it still parse. It never did anything.
+    parser.add_argument("--reload", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--jobs-modules",
         default=None,
@@ -41,6 +44,9 @@ async def handle_dashboard(args) -> int:
             "Dashboard is not available. Install with: pip install 'soniq[dashboard]'"
         )
         return 1
+
+    if getattr(args, "reload", False):
+        print_status("--reload does nothing and will be removed.", "warning")
 
     # The dashboard exposes dead-letter replay, which re-inserts a soniq_jobs
     # row and needs the target job's registration to resolve max_attempts. Run

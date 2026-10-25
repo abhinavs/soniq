@@ -1,6 +1,10 @@
-# Migrate from RQ
+---
+description: Migrate from RQ (Redis Queue) to Soniq, a Python background job library that runs on PostgreSQL. Run RQ-style jobs without Redis, with a concept map and steps.
+---
 
-This guide is for teams running RQ (Redis Queue) who want to move to Soniq. RQ is intentionally minimal - the entire surface fits in one head - so this migration is short and mostly mechanical. Most of the page below is the concept map; the migration sequence at the end is six steps.
+# Migrate from RQ to Soniq (Python jobs without Redis)
+
+Soniq is a Python background job library that stores jobs in PostgreSQL, so it replaces the Redis that RQ needs. Moving from RQ means adding `@soniq.job(name=...)` to each job function, calling `await soniq.enqueue(func, arg=value)`, and running `soniq worker`. Soniq has no job dependencies (`depends_on`), no pickle, and no per-enqueue `Retry`. The concept map below covers each RQ feature, and the migration is six steps.
 
 ## Concept map
 
@@ -10,7 +14,7 @@ The fast version. Every row is expanded in the sections that follow.
 |---|---|---|
 | `q = Queue(connection=Redis())` | `soniq = Soniq(database_url="postgresql://...")` | No Redis. Jobs live in Postgres. |
 | `Queue("urgent")` | `queue="urgent"` argument on `@soniq.job(...)` or `enqueue(...)` | One app, many queue names. |
-| Plain Python function (no decorator) | `@soniq.job()` decorator | Soniq registers by decorator; RQ resolves by import path at run time. |
+| Plain Python function (no decorator) | `@soniq.job(name="...")` decorator | Soniq registers by decorator; RQ resolves by import path at run time. |
 | `q.enqueue(func, arg)` | `await soniq.enqueue(func, arg=arg)` | Async, keyword-only args. |
 | `q.enqueue_in(timedelta(seconds=30), func, arg)` | `await soniq.enqueue(func, scheduled_at=timedelta(seconds=30), arg=arg)` | |
 | `q.enqueue_at(datetime, func, arg)` | `await soniq.enqueue(func, scheduled_at=datetime, arg=arg)` | |
@@ -18,14 +22,16 @@ The fast version. Every row is expanded in the sections that follow.
 | `job.get_status()` | `(await soniq.get_job(job_id))["status"]` | Status values differ - see "Job lifecycle". |
 | `job.result` | `await soniq.get_result(job_id)` | |
 | `job.cancel()` | `await soniq.cancel_job(job_id)` | |
-| `q.empty()` | Not exposed; use SQL or `soniq.dead_letter.purge(...)` for the DLQ | Mass-delete is intentionally not a one-liner. |
+| `q.empty()` | Not exposed for live jobs. Use SQL. For the dead-letter table, use `soniq dead-letter delete` or `soniq.dead_letter.bulk_delete(...)` | Mass-delete of queued jobs has no helper. |
 | `rq worker` | `soniq worker` | |
 | `rq worker queue1 queue2` | `soniq worker --queues queue1,queue2` | |
-| `rq worker --burst` | not exposed today | Soniq workers are long-lived. |
+| `rq worker --burst` | `soniq worker --run-once` | Drains the ready jobs and exits. |
 | `rq-scheduler` (separate package) | `soniq scheduler` (built in) + `@soniq.periodic(...)` | |
 | RQ Dashboard / `rq info` | `soniq dashboard` and `soniq inspect` | Both built in. |
 | `FailedJobRegistry` | `soniq_dead_letter_jobs` table; `soniq.dead_letter.replay(dlq_id)` | |
-| `StartedJobRegistry` / `FinishedJobRegistry` | `soniq_jobs.status` | One table, four states - no per-state registry. |
+| `StartedJobRegistry` / `FinishedJobRegistry` | `soniq_jobs.status` | One table, four states, no per-state registry. |
+| `get_current_job()` | A `ctx: JobContext` parameter on the handler | Has `job_id`, `attempt`, `queue` and more. |
+| `depends_on=job` | Not supported | Enqueue the next job from the handler. |
 
 ## Connection vs URL
 
@@ -44,7 +50,7 @@ from soniq import Soniq
 soniq = Soniq(database_url=os.environ["DATABASE_URL"])
 ```
 
-The string form serialises cleanly into env vars and config files, matches what every other Python database library expects, and means most apps already have it sitting in `.env`. The migration usually looks like:
+A URL string fits in env vars and config files, and most apps already have one for their ORM. The change usually looks like this:
 
 ```bash
 # before
@@ -56,7 +62,7 @@ DATABASE_URL=postgresql://localhost/myapp   # already there for your ORM
 
 ## Defining jobs: decorator vs no decorator
 
-This is RQ's biggest API difference, and it's worth understanding before you convert any code.
+This is the biggest API difference between RQ and Soniq. Read it before you convert any code.
 
 RQ jobs are just regular Python functions. The queue resolves them by import path at enqueue time:
 
@@ -67,7 +73,7 @@ def send_email(to, subject):
 
 # producer
 q.enqueue(send_email, "dev@example.com", subject="Hi")
-# or:
+# or, by import path:
 q.enqueue("myapp.jobs.send_email", "dev@example.com", subject="Hi")
 ```
 
@@ -83,12 +89,12 @@ async def send_email(to: str, subject: str):
 await soniq.enqueue(send_email, to="dev@example.com", subject="Hi")
 ```
 
-Why the decorator? Two reasons:
+The decorator has two purposes:
 
-- **Per-job configuration lives on the registration.** Retries, queue, priority, timeout, validation - all decorator kwargs. RQ scatters these across `Retry(...)` objects and `enqueue(...)` kwargs.
-- **The worker imports the registration on startup.** That gives Soniq a stable task name (`module.qualname` by default, or whatever you pass to `name=`) which is the wire-protocol identifier for cross-service enqueue. RQ resolves the function lazily at job-execution time, which is flexible but means refactoring (renaming a module, moving a function) silently breaks any in-flight job.
+- **Per-job configuration lives on the registration.** Retries, queue, priority, timeout and validation are decorator kwargs. RQ splits them between `Retry(...)` objects and `enqueue(...)` kwargs.
+- **The worker imports the registration on startup.** The `name=` you pass is a stable identifier, and cross-service enqueue uses it. Always pass `name=`, because a name derived from the module path is deprecated and warns. RQ resolves the function by import path when the job runs, so renaming a module or moving a function breaks jobs that are already queued.
 
-If your RQ jobs don't have any per-job options today, the migration is just adding `@soniq.job()` above each function and changing the body to `async def`. About as mechanical as renames get.
+If your RQ jobs have no per-job options, add `@soniq.job(name="...")` above each function and change the body to `async def`.
 
 ## Argument style
 
@@ -104,11 +110,11 @@ Soniq's `enqueue` is keyword-only for job arguments. Pass the function as the fi
 await soniq.enqueue(send_email, to="dev@example.com", subject="Welcome")
 ```
 
-The keyword-only style means there's never ambiguity between framework options (`queue`, `priority`, `scheduled_at`) and your job's own arguments. RQ avoids the same ambiguity by namespacing options under `Retry(...)` etc., which is a different solution to the same problem.
+The keyword-only style separates Soniq options (`queue`, `priority`, `scheduled_at`) from your job arguments. Soniq also rejects arguments that are not JSON (a `datetime`, a `UUID`) at enqueue time with `SONIQ_TASK_ARGS_INVALID`.
 
 ## Sync vs async handlers
 
-RQ handlers are sync. Soniq prefers async, but supports both:
+RQ handlers are sync. Soniq prefers async and supports both:
 
 ```python
 @soniq.job(name="jobs.fetch_async")
@@ -121,7 +127,7 @@ def fetch_sync(url: str):
     return requests.get(url).text   # runs on a bounded thread pool
 ```
 
-The thread pool is per-worker and bounded - if all threads are busy, sync jobs queue up rather than oversubscribing the host. You can keep sync handlers indefinitely; the recommendation to port to `async def` is a performance tip, not a requirement. If your handlers do I/O (HTTP, database queries, S3), the async port usually pays for itself.
+The thread pool is bounded: 8 threads per Soniq instance by default (`SONIQ_SYNC_HANDLER_POOL_SIZE`). When all threads are busy, sync jobs wait. You can keep sync handlers. Porting to `async def` is optional, and it helps most for I/O-bound handlers (HTTP, database queries, S3).
 
 ## Retries
 
@@ -140,13 +146,13 @@ async def fetch(url: str):
     ...
 ```
 
-There's no per-enqueue override today - if you need a one-off retry policy for a specific call site, the recommended pattern is to define a second job with different decorator kwargs. We've yet to see a real use case where this is awkward.
+Soniq has no per-enqueue retry override. For a different retry policy at one call site, define a second job with different decorator kwargs.
 
-By default, any uncaught exception triggers a retry. To suppress, catch it in the handler and return normally.
+The default is `retries=3`. Any uncaught exception triggers a retry. To skip the retry, catch the exception in the handler and return normally.
 
 ## Job lifecycle and statuses
 
-RQ tracks jobs through registries: `StartedJobRegistry`, `FinishedJobRegistry`, `FailedJobRegistry`, `ScheduledJobRegistry`, `DeferredJobRegistry`. Soniq has one `soniq_jobs` table with a `status` column pinned to four values:
+RQ tracks jobs through registries: `StartedJobRegistry`, `FinishedJobRegistry`, `FailedJobRegistry`, `ScheduledJobRegistry`, `DeferredJobRegistry`. Soniq has one `soniq_jobs` table with a `status` column that has four values:
 
 | Soniq status | Closest RQ analog |
 |---|---|
@@ -155,7 +161,7 @@ RQ tracks jobs through registries: `StartedJobRegistry`, `FinishedJobRegistry`, 
 | `done` | `finished` |
 | `cancelled` | the result of `job.cancel()` before it ran |
 
-There is no `failed` row state. A failure either re-queues the job (back to `queued`) or, after retries are exhausted, moves the job into the dedicated `soniq_dead_letter_jobs` table - which plays the same role as RQ's `FailedJobRegistry` but is a queryable, replayable durable record:
+There is no `failed` row state. A failure either re-queues the job (back to `queued`) or, after retries are exhausted, moves the job into the dedicated `soniq_dead_letter_jobs` table - which plays the role of RQ's `FailedJobRegistry`. The table is durable and queryable, and you can replay its rows:
 
 ```python
 # Replay a dead-lettered job back into the queue:
@@ -174,13 +180,13 @@ result = await soniq.get_result(job_id)
 
 Caveats:
 
-- **Return values must be JSON-serialisable.** RQ uses pickle by default; Soniq is JSON-only on purpose. Return dicts/lists/scalars, or persist large outputs to S3 and return a reference.
-- **No blocking `.result` accessor.** Async polling is your tool. We deliberately don't ship a blocking helper because most "wait for this job" patterns turn the queue into an RPC.
-- **Results live as long as the job row.** Configure `SONIQ_DONE_JOB_RETENTION_DAYS` if you produce a lot of jobs.
+- **Return values must be JSON-serialisable.** RQ uses pickle by default. Soniq is JSON-only. If a return value is not JSON, the job still completes and the stored result is `None`. Return dicts, lists and scalars, or store large outputs in S3 and return a reference.
+- **No blocking `.result` accessor.** Poll with `soniq.get_result`. Soniq has no blocking helper, because waiting for a job turns a queue into an RPC.
+- **Results expire.** Soniq deletes a completed job after `result_ttl` seconds. The default is 300 (5 minutes), and `SONIQ_RESULT_TTL` sets it. RQ keeps results for 500 seconds by default.
 
 ## Periodic jobs: rq-scheduler -> the scheduler
 
-`rq-scheduler` is a separate package and a separate process. Soniq ships an equivalent built in:
+`rq-scheduler` is a separate package and process. Soniq includes a scheduler:
 
 ```python
 from datetime import timedelta
@@ -194,54 +200,58 @@ async def warm_caches():
     ...
 ```
 
-Run it with `soniq scheduler`. Multiple replicas coordinate via a Postgres advisory lock - one is leader, the rest idle, so you get failover for free.
+Run it with `soniq scheduler`. Replicas elect a leader with a Postgres advisory lock. One replica fires jobs and the others wait, so you get failover. Pass exactly one of `cron=` or `every=`.
 
 ## Workers: `rq worker` -> `soniq worker`
 
 | RQ | Soniq |
 |---|---|
-| `rq worker --url redis://localhost` | `SONIQ_DATABASE_URL=postgresql://... SONIQ_JOBS_MODULES=app.jobs soniq worker` |
+| `rq worker --url redis://localhost` | `soniq worker app.jobs:soniq` (or `SONIQ_DATABASE_URL=postgresql://... SONIQ_JOBS_MODULES=app.jobs soniq worker`) |
 | `rq worker high default low` | `soniq worker --queues high,default,low` |
-| `rq worker --burst` | not supported today - workers are long-lived |
-| `rq info` | `soniq inspect` |
+| `rq worker --burst` | `soniq worker --run-once` |
+| `rq info` | `soniq status` (queues and jobs) and `soniq inspect` (workers) |
 
-`SONIQ_JOBS_MODULES` is the env-var equivalent of "tell the worker which modules to import" - registrations happen at import time, so the worker needs to import your jobs modules to know what tasks exist. Either set the env var or pass `--jobs-modules`.
+Registrations happen at import time, so the worker must import your jobs modules. The `module:attribute` app path does this. Without an app path, set `SONIQ_JOBS_MODULES` or pass `--jobs-modules`.
 
 ## Things RQ has that Soniq does not
 
-Worth flagging before the migration:
+Check this list before you migrate:
 
-- **`--burst` mode.** RQ workers can drain the queue and exit. Soniq workers are long-lived. If you used `--burst` for cron-triggered batch processing, the equivalent is "run a one-off Python script that calls `soniq.enqueue(...)` and then exits", and let normal workers process the result.
-- **Per-enqueue retry overrides via `Retry(...)`.** Soniq retries are decorator-level; see "Retries" above.
+- **Job dependencies (`depends_on`).** Soniq has no dependency graph. Enqueue the next job from the last step of the previous job.
+- **Per-enqueue retry overrides via `Retry(...)`.** Soniq retries are set on the decorator. See "Retries".
 - **Pickle serialisation.** Soniq is JSON-only.
+- **Delivery guarantees.** RQ and Soniq do not guarantee exactly-once delivery. Soniq delivers at least once, so write idempotent handlers.
+- **Burst mode with a different meaning.** `soniq worker --run-once` drains the ready jobs and exits. It does not wait for jobs that are scheduled for later.
+- **Redis-only features.** Soniq runs on PostgreSQL only (plus SQLite and in-memory backends for tests).
 
 ## What you give up (and what you gain)
 
-RQ already runs without an extra service in some setups (if you happen to have Redis), and its API is famously small. Soniq doesn't try to be smaller - it tries to remove Redis from your stack. If you don't already run Postgres, you're trading one service for another, which is not a win. The migration argument is strongest when:
+RQ has a small API. Soniq is not smaller. It removes Redis from your stack. If you do not already run Postgres, you swap one service for another, and the move has little value. The case for Soniq is strongest when:
 
-- You already run Postgres for application data
-- You want transactional enqueue (atomic with your DB writes)
-- You want async-native workers
-- You'd rather have one well-monitored Postgres than one Redis + one Postgres
+- You already run Postgres for application data.
+- You want transactional enqueue, so a job commits or rolls back with your database writes.
+- You want async-native workers.
+- You prefer one monitored database over Redis plus Postgres.
 
-If those don't apply, RQ is fine. Stay on it.
+If none of these apply, stay on RQ.
 
 ## Migration sequence
 
-Because RQ's surface is small, the recommended path is direct rather than a long side-by-side period:
+RQ and Soniq share no state, so you can move one module at a time.
 
-1. **Install Soniq** alongside RQ.
-2. **Run `soniq setup`** against your Postgres database.
-3. **Convert one job module.** Add `@soniq.job()` to each function, switch sync to `async def` if you can, replace `q.enqueue(...)` calls with `await soniq.enqueue(...)`.
-4. **Run a Soniq worker:** `SONIQ_JOBS_MODULES=app.jobs soniq worker`.
-5. **Drain the RQ queue.** Stop enqueuing into Redis. Wait for the queue to empty. Stop RQ workers.
-6. **Remove RQ** from `pyproject.toml` and the Redis dependency if nothing else uses it.
+1. Install Soniq alongside RQ.
+2. Run `soniq setup app.jobs:soniq` against your Postgres database.
+3. Convert one job module. Add `@soniq.job(name="...")` to each function. Change sync functions to `async def` if you can. Replace `q.enqueue(...)` with `await soniq.enqueue(...)`.
+4. Run a Soniq worker: `soniq worker app.jobs:soniq`.
+5. Stop enqueuing into Redis. Wait for the RQ queue to empty. Stop the RQ workers.
+6. Remove RQ from `pyproject.toml`. Remove Redis if nothing else uses it.
 
-The API surface is different enough (decorator-required, keyword-only args, sync->async, JSON-only results) that the rewrite is direct rather than aliased. The good news is that it is mechanical and one module at a time.
+The API differs from RQ in four ways: the decorator is required, arguments are keyword-only, handlers are async, and results are JSON-only. The rewrite is mechanical.
 
 ## See also
 
 - [Quickstart](../quickstart.md) - five minutes from `pip install` to first job
-- [Transactional enqueue](../guides/transactional-enqueue.md) - the killer feature Redis-backed queues cannot offer
+- [Migrate from Celery](from-celery.md) - the same guide for Celery users
+- [Transactional enqueue](../guides/transactional-enqueue.md) - enqueue a job in the same database transaction as your data, which a Redis-backed queue cannot do
 - [Tutorial: defining jobs](../tutorial/01-defining-jobs.md) - the decorator API in depth
 - [Going to production](../production/going-to-production.md)

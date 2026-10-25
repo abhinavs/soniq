@@ -1,6 +1,10 @@
+---
+description: Run recurring Python background jobs on a cron schedule with Soniq @periodic and PostgreSQL. Covers cron strings, intervals, the scheduler and a full example.
+---
+
 # Recipe: Scheduled Reports
 
-A pattern for generating recurring reports on a cron schedule using `@soniq.periodic`.
+This recipe generates recurring reports on a cron schedule with `@soniq.periodic`. Soniq stores the schedule in PostgreSQL, and the `soniq scheduler` process enqueues each run.
 
 ## The job
 
@@ -21,11 +25,11 @@ async def weekly_sales_report():
     )
 ```
 
-The `@soniq.periodic` decorator registers both the job and its schedule. The scheduler picks it up automatically.
+The `@soniq.periodic` decorator registers both the job and its schedule. The scheduler process reads the registered schedules.
 
 ## Running the scheduler
 
-The scheduler is a separate process that creates job instances on schedule. Run it alongside your worker:
+The scheduler is a separate process that enqueues jobs on schedule. Run it next to your worker:
 
 ```bash
 # Terminal 1: Scheduler (creates jobs on schedule)
@@ -55,7 +59,7 @@ async def check_stale_orders():
     ...
 ```
 
-Interval helpers for simpler cases (use the cron-string builders or a `timedelta`):
+Use the `every(...)` builders for simple intervals. They return cron strings:
 
 ```python
 from datetime import timedelta

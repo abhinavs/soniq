@@ -49,11 +49,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.14"]
+        # Oldest Python on the oldest supported Postgres, newest on newest.
+        include:
+          - python-version: "3.10"
+            postgres: "15"
+          - python-version: "3.14"
+            postgres: "18"
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -92,7 +97,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

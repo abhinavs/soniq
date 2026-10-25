@@ -54,7 +54,7 @@ class LogAnalyzer:
                 SELECT
                     job_name,
                     COUNT(*) as error_count,
-                    array_agg(DISTINCT message) as error_messages
+                    pg_catalog.array_agg(DISTINCT message) as error_messages
                 FROM {self.table_name}
                 WHERE level IN ('ERROR', 'CRITICAL')
                 AND timestamp >= NOW() - ($1 || ' hours')::INTERVAL

@@ -4,12 +4,15 @@ Provides encryption utilities for sensitive data like webhook secrets.
 """
 
 import base64
+import logging
 import os
 import secrets
 from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
     from soniq.app import Soniq
+
+logger = logging.getLogger(__name__)
 
 try:
     from cryptography.fernet import Fernet
@@ -53,12 +56,11 @@ class SecretManager:
             secret_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(
                 "utf-8"
             )
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(
-                "No SONIQ_SECRET_KEY environment variable found. "
-                "Using auto-generated key. For production, set SONIQ_SECRET_KEY."
+                "SONIQ_SECRET_KEY is not set, so webhook secrets are encrypted "
+                "with a random key that only lives in this process. Secrets "
+                "stored now cannot be decrypted after a restart or by another "
+                "worker. Set SONIQ_SECRET_KEY to a stable value."
             )
 
         self._secret_key = secret_key
@@ -115,23 +117,32 @@ class SecretManager:
             result: str = fernet.decrypt(token).decode("utf-8")
             return result
         except Exception as e:
-            raise ValueError(f"Failed to decrypt secret: {e}") from e
+            # Fernet errors have an empty message, so say what likely happened.
+            logger.error(
+                "Failed to decrypt a webhook secret. SONIQ_SECRET_KEY is "
+                "probably unset or different from the key used to encrypt it."
+            )
+            raise ValueError(f"Failed to decrypt secret: {e!r}") from e
 
     def is_encrypted(self, value: str) -> bool:
         """
-        Check if a string appears to be encrypted (basic heuristic).
+        Check if a string looks like our encrypted format (heuristic).
 
-        This is not foolproof but helps with migration from plaintext.
+        The value must be urlsafe base64 holding a 16-byte salt plus a Fernet
+        token (itself base64). The raw token must start with version byte
+        0x80 and have Fernet's layout: 57 bytes of header and HMAC plus whole
+        16-byte blocks. A plaintext with exactly this shape is vanishingly
+        unlikely, but there is no key check, so it is still not proof.
         """
         if not value:
             return False
 
         try:
             decoded = base64.urlsafe_b64decode(value.encode("utf-8"))
-            # 16-byte salt + Fernet token (min 73 bytes)
-            return len(decoded) >= _SALT_LENGTH + 73
+            token = base64.urlsafe_b64decode(decoded[_SALT_LENGTH:])
         except Exception:
             return False
+        return len(token) >= 73 and (len(token) - 57) % 16 == 0 and token[0] == 0x80
 
 
 class SigningService:

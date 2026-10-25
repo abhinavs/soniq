@@ -210,20 +210,26 @@ class HTTPTransport:
         timeout = aiohttp.ClientTimeout(total=self._default_timeout)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, data=payload, headers=headers) as response:
+                async with session.post(
+                    url, data=payload, headers=headers, allow_redirects=False
+                ) as response:
                     # Cap response body at 4KB to prevent OOM from large responses
                     body = (await response.content.read(4096)).decode(
                         "utf-8", errors="replace"
                     )
+                    if 300 <= response.status < 400:
+                        # Following a redirect would re-send the signed body and
+                        # headers to a host the endpoint owner picked.
+                        error = f"HTTP {response.status} redirect not followed"
+                    elif 200 <= response.status < 300:
+                        error = None
+                    else:
+                        error = f"HTTP {response.status}"
                     return WebhookResult(
-                        ok=200 <= response.status < 300,
+                        ok=error is None,
                         status=response.status,
                         body=body,
-                        error=(
-                            None
-                            if 200 <= response.status < 300
-                            else f"HTTP {response.status}"
-                        ),
+                        error=error,
                     )
         except Exception as e:
             return WebhookResult(ok=False, status=None, body=None, error=str(e))
@@ -540,6 +546,11 @@ class WebhookDispatcher:
         if endpoint.plaintext_secret:
             headers["X-Webhook-Signature"] = WebhookSigner.sign_payload(
                 payload_json, endpoint.plaintext_secret
+            )
+            # Also covers the timestamp so receivers can reject replays.
+            headers["X-Webhook-Signature-V2"] = WebhookSigner.sign_payload(
+                f"{headers['X-Webhook-Timestamp']}.{payload_json}",
+                endpoint.plaintext_secret,
             )
 
         result = await self.transport.deliver(

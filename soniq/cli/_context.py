@@ -19,7 +19,8 @@ configuration.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import sys
+from contextlib import asynccontextmanager, redirect_stdout
 from typing import Any, AsyncIterator, List
 from urllib.parse import urlsplit
 
@@ -52,10 +53,12 @@ async def cli_app(args: Any) -> AsyncIterator[Soniq]:
     Always builds a fresh instance and closes it on exit.
     """
     app = await resolve_app(args)
-    print_status(
-        f"Using instance-based configuration: {redact_url(app.settings.database_url)}",
-        "info",
-    )
+    # stderr, so piped output (dead-letter list/export) stays clean.
+    with redirect_stdout(sys.stderr):
+        print_status(
+            f"Using instance-based configuration: {redact_url(app.settings.database_url)}",
+            "info",
+        )
     try:
         yield app
     finally:

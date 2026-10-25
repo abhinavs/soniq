@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 _MAX_LAST_ERROR_CHARS = 8192
 
 
+class _HandlerTimeout(Exception):
+    """Carries a TimeoutError the handler raised itself (as ``__cause__``).
+
+    On 3.11+ ``asyncio.TimeoutError is TimeoutError``, so without this a
+    handler's own socket timeout would read as "Job timed out after Ns".
+    """
+
+
 def _format_job_error(exc: BaseException) -> str:
     """Render an exception as `ExceptionType: message\n<traceback>`.
 
@@ -37,8 +45,14 @@ def _format_job_error(exc: BaseException) -> str:
     failure back from the job record (or the dashboard) without having to go
     hunt for logs. Truncated at `_MAX_LAST_ERROR_CHARS` to stay bounded.
     """
+    # An exception whose __str__ raises must still fail the job, not escape
+    # and leave it in `processing`. traceback already guards its own str().
+    try:
+        message = str(exc)
+    except Exception:
+        message = "<exception str() failed>"
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    rendered = f"{type(exc).__name__}: {exc}\n{tb}"
+    rendered = f"{type(exc).__name__}: {message}\n{tb}"
     if len(rendered) > _MAX_LAST_ERROR_CHARS:
         rendered = rendered[:_MAX_LAST_ERROR_CHARS]
     return _storable_text(rendered)
@@ -82,13 +96,13 @@ async def _execute_job_safely(
     if settings is None:
         settings = SoniqSettings()
 
-    # Backends uniformly return `args` as a dict (Postgres JSONB codec,
-    # SQLite json.loads on read, Memory stores dict natively). A non-dict
-    # at this point means a backend contract violation; surface it loudly.
+    # Backends return `args` as a dict, or as the raw text when Python
+    # can't decode it (a huge int, very deep nesting). A raw INSERT can
+    # also store a non-object. The caller dead-letters the job.
     args_data = job_record["args"]
     if not isinstance(args_data, dict):
         raise ValueError(
-            f"Backend contract violation: job args must be dict, got {type(args_data).__name__}"
+            f"Job args must be a JSON object Python can decode, got {type(args_data).__name__}"
         )
 
     # Validate arguments if model is specified
@@ -101,7 +115,8 @@ async def _execute_job_safely(
                 f"Corrupted argument data: {str(validation_error)}"
             ) from validation_error
     else:
-        validated_args = args_data
+        # Copy: ctx injection below must not leak into the stored args.
+        validated_args = dict(args_data)
 
     # Inject JobContext if the function signature has it
 
@@ -195,16 +210,42 @@ async def _execute_job_safely(
     else:
         invoke = base_handler
 
+    async def run() -> Any:
+        try:
+            return await invoke(ctx)
+        except asyncio.TimeoutError as e:
+            raise _HandlerTimeout() from e
+
     try:
         if timeout:
-            result = await asyncio.wait_for(invoke(ctx), timeout=timeout)
+            result = await asyncio.wait_for(run(), timeout=timeout)
         else:
-            result = await invoke(ctx)
+            result = await run()
         return True, None, result
+    except _HandlerTimeout as e:
+        return False, _format_job_error(e.__cause__), None
     except asyncio.TimeoutError:
         return False, f"Job timed out after {timeout}s", None
     except Exception as e:
         return False, _format_job_error(e), None
+
+
+def _reclaimed(written: Any, job_id: str, outcome: str) -> bool:
+    """True when an outcome write missed because the claim is gone.
+
+    A handler that blocks past the heartbeat timeout gets its job requeued
+    and claimed again. Its late outcome must not touch the new run, so the
+    write is dropped and nothing after it should act as if it landed.
+    A backend that returns None is treated as written.
+    """
+    if written is not False:
+        return False
+    logger.warning(
+        "Job %s was reclaimed by another worker; dropping late %s outcome",
+        job_id,
+        outcome,
+    )
+    return True
 
 
 async def _call_hooks(hooks: dict, hook_name: str, *args) -> None:
@@ -291,23 +332,29 @@ async def process_job_via_backend(
 
     # Guard: if repeated crashes pushed attempts past max, dead-letter without executing
     if attempts > max_attempts:
-        await backend.mark_job_dead_letter(
+        written = await backend.mark_job_dead_letter(
             job_id,
             attempts=attempts,
             error="Max attempts exceeded (job crashed repeatedly)",
             reason="max_retries_exceeded",
+            claimed_attempts=attempts,
         )
+        if _reclaimed(written, job_id, "dead_letter"):
+            return True
         logger.error(f"Job {job_id} dead-lettered after {attempts} crash attempts")
         return True
 
     job_meta = job_registry.get_job(job_name)
     if not job_meta:
-        await backend.mark_job_dead_letter(
+        written = await backend.mark_job_dead_letter(
             job_id,
             attempts=max_attempts,
             error=f"Job {job_name} not registered.",
             reason="job_not_found",
+            claimed_attempts=attempts,
         )
+        if _reclaimed(written, job_id, "dead_letter"):
+            return True
         logger.error(f"Job {job_name} not registered - moved to dead letter queue")
         return True
 
@@ -405,12 +452,16 @@ async def _dispatch_and_record(
         )
     except ValueError as corruption_error:
         logger.error(f"Job {job_id} has corrupted data: {corruption_error}")
-        await backend.mark_job_dead_letter(
+        written = await backend.mark_job_dead_letter(
             job_id,
             attempts=max_attempts,
             error=_storable_text(str(corruption_error)),
             reason="invalid_arguments",
+            claimed_attempts=attempts,
         )
+        if _reclaimed(written, job_id, "dead_letter"):
+            await _emit_end("reclaimed")
+            return True
         await _emit_end("dead_letter", error=str(corruption_error))
         return True
 
@@ -441,12 +492,16 @@ async def _dispatch_and_record(
             # actually fails. Without this rollback, every snooze would
             # silently shrink the retry budget.
             restored_attempts = max(attempts - 1, 0)
-            await backend.reschedule_job(
+            written = await backend.reschedule_job(
                 job_id,
                 delay_seconds=capped,
                 attempts=restored_attempts,
                 reason=job_result.reason,
+                claimed_attempts=attempts,
             )
+            if _reclaimed(written, job_id, "snooze"):
+                await _emit_end("reclaimed")
+                return True
             logger.info(
                 "Job %s snoozed for %.1fs (attempts kept at %d)",
                 job_id,
@@ -458,21 +513,36 @@ async def _dispatch_and_record(
 
         # The handler's side effects already happened, so a bad return value
         # doesn't fail the job. Store no result rather than Python-only text.
+        # Anything can go wrong here: a non-JSON value, RecursionError on a
+        # deeply nested one, or Postgres rejecting a result over the jsonb
+        # size limit. All of them must still finish the job.
         try:
             to_json(job_result)
-        except (TypeError, ValueError) as e:
+            written = await backend.mark_job_done(
+                job_id,
+                result_ttl=settings.result_ttl,
+                result=job_result,
+                claimed_attempts=attempts,
+            )
+        except Exception as e:
             logger.error(
-                "Job %s (%s) returned a %s that can't be stored (%s); "
+                "Job %s (%s) returned a %s that can't be stored (%s: %.200s); "
                 "the job is done but no result is stored",
                 job_id,
                 job_name,
                 type(job_result).__name__,
+                type(e).__name__,
                 e,
             )
-            job_result = None
-        await backend.mark_job_done(
-            job_id, result_ttl=settings.result_ttl, result=job_result
-        )
+            written = await backend.mark_job_done(
+                job_id,
+                result_ttl=settings.result_ttl,
+                result=None,
+                claimed_attempts=attempts,
+            )
+        if _reclaimed(written, job_id, "done"):
+            await _emit_end("reclaimed")
+            return True
         logger.info(f"Job {job_id} completed in {duration_ms}ms")
         await _call_hooks(_hooks, "after_job", job_name, job_id, duration_ms)
         await _emit_end("done")
@@ -484,12 +554,16 @@ async def _dispatch_and_record(
             wrapped = f"Max retries exceeded: {job_error}"
             if len(wrapped) > _MAX_LAST_ERROR_CHARS:
                 wrapped = wrapped[:_MAX_LAST_ERROR_CHARS]
-            await backend.mark_job_dead_letter(
+            written = await backend.mark_job_dead_letter(
                 job_id,
                 attempts=attempts,
                 error=wrapped,
                 reason="max_retries_exceeded",
+                claimed_attempts=attempts,
             )
+            if _reclaimed(written, job_id, "dead_letter"):
+                await _emit_end("reclaimed")
+                return True
             logger.error(f"Job {job_id} moved to dead letter after {attempts} attempts")
             await _emit_end("dead_letter", error=str(job_error))
         else:
@@ -509,12 +583,16 @@ async def _dispatch_and_record(
                 wrapped = f"Retry policy declined: {job_error}"
                 if len(wrapped) > _MAX_LAST_ERROR_CHARS:
                     wrapped = wrapped[:_MAX_LAST_ERROR_CHARS]
-                await backend.mark_job_dead_letter(
+                written = await backend.mark_job_dead_letter(
                     job_id,
                     attempts=attempts,
                     error=wrapped,
                     reason="permanent_failure",
+                    claimed_attempts=attempts,
                 )
+                if _reclaimed(written, job_id, "dead_letter"):
+                    await _emit_end("reclaimed")
+                    return True
                 logger.error(
                     f"Job {job_id} dead-lettered by retry policy at attempt {attempts}"
                 )
@@ -524,12 +602,16 @@ async def _dispatch_and_record(
             error_message = str(job_error)
             if len(error_message) > _MAX_LAST_ERROR_CHARS:
                 error_message = error_message[:_MAX_LAST_ERROR_CHARS]
-            await backend.mark_job_failed(
+            written = await backend.mark_job_failed(
                 job_id,
                 attempts=attempts,
                 error=error_message,
                 retry_delay=retry_delay if retry_delay > 0 else None,
+                claimed_attempts=attempts,
             )
+            if _reclaimed(written, job_id, "failed"):
+                await _emit_end("reclaimed")
+                return True
             logger.warning(
                 f"Job {job_id} failed (attempt {attempts}), "
                 + (

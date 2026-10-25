@@ -23,9 +23,9 @@ Pages included, in order:
 
 *(source: docs/quickstart.md)*
 
-# Quickstart
+# Quickstart: run a Python background job with PostgreSQL
 
-Get a job running in under 5 minutes.
+Soniq is a Python background job library that uses PostgreSQL as its queue. This page takes you from `pip install` to a running worker in about 5 minutes.
 
 ## 1. Install
 
@@ -33,22 +33,28 @@ Get a job running in under 5 minutes.
 pip install soniq
 ```
 
-You will need a running PostgreSQL. If you do not have one handy, `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16` will do.
+You need a running PostgreSQL. If you do not have one, start one with Docker:
 
-> Just want to try Soniq without Postgres? `pip install "soniq[sqlite]"`, then pass a bare file path instead of a URL: `Soniq(database_url="dev.db")`. SQLite and the in-memory backend (`Soniq(backend="memory")`) are for local dev and tests only - see the [testing guide](guides/testing.md#sqlite-for-integration-tests) and the [Backend](reference/glossary.md#backend) glossary entry.
+```bash
+docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+```
+
+> To try Soniq without PostgreSQL, run `pip install "soniq[sqlite]"`. Then pass a file path instead of a URL: `Soniq(database_url="dev.db")`. SQLite and the in-memory backend (`Soniq(backend="memory")`) are for local development and tests only. See the [testing guide](guides/testing.md#sqlite-for-integration-tests) and the [Backend](reference/glossary.md#backend) glossary entry.
 
 ## 2. Set the environment
 
-The `soniq` command and your Python code both read the database URL from the environment. Set it once in your shell:
+The `soniq` command and your Python code both read the database URL from the environment. Set both variables in your shell:
 
 ```bash
 export SONIQ_DATABASE_URL="postgresql://localhost/myapp"
 export SONIQ_JOBS_MODULES=jobs
 ```
 
-`SONIQ_JOBS_MODULES` tells the worker which Python modules to import on startup, so the `@soniq.job()` decorators run and register the functions. Without it, the worker does not know which jobs exist.
+`SONIQ_JOBS_MODULES` lists the Python modules that the worker imports on startup. The import runs the `@soniq.job()` decorators, which register your jobs. Without it, the worker does not know which jobs exist.
 
 ## 3. Define a job
+
+Create a file named `jobs.py`:
 
 ```python
 # jobs.py
@@ -69,7 +75,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-The job has an explicit `name`. When you run `python jobs.py`, Python calls the file `__main__`. Without a fixed name, the job would be stored as `__main__.send_welcome`, and the worker (which imports the file as `jobs`) could not find it.
+The job has an explicit `name`. When you run `python jobs.py`, Python calls the file `__main__`. Without a fixed name, Soniq stores the job as `__main__.send_welcome`. The worker imports the file as `jobs`, so it cannot find that name.
 
 ## 4. Set up the database
 
@@ -77,7 +83,7 @@ The job has an explicit `name`. When you run `python jobs.py`, Python calls the 
 soniq setup
 ```
 
-Creates the tables Soniq needs. The command is idempotent (safe to run more than once - re-running it does not break anything).
+This command creates the tables that Soniq needs. It is idempotent: you can run it more than once and it changes nothing the second time.
 
 ## 5. Start a worker
 
@@ -85,43 +91,43 @@ Creates the tables Soniq needs. The command is idempotent (safe to run more than
 soniq worker --concurrency 4
 ```
 
-The worker process must be able to import your job code. See [Job module discovery](getting-started/installation.md#job-module-discovery) for cross-service setups and per-worker overrides.
+The worker process must be able to import your job code. For cross-service setups and per-worker overrides, see [Job module discovery](getting-started/installation.md#job-module-discovery).
 
 ## 6. Enqueue a job
 
-In another terminal:
+Open another terminal and run:
 
 ```bash
 python jobs.py
 ```
 
-The worker prints "Sending welcome email to dev@example.com". You have a working background queue.
+The worker prints "Sending welcome email to dev@example.com". You now have a working background queue.
 
 ## What changes in production
 
-The code above works, but you will want to tighten a few things before deploying for real.
+Make these changes before you deploy.
 
-> **New to job queues?** The terms below (idempotent, at-least-once) are explained inline as they appear, and the [tutorial](tutorial/01-defining-jobs.md) covers each in depth. The quickstart is just here to show the mechanics - do not feel like you have to internalize all of this in one sitting.
+- **Read settings from the environment.** Do not hardcode `database_url`. Soniq reads `SONIQ_DATABASE_URL` automatically.
+- **Set `SONIQ_JOBS_MODULES`** so workers import your job functions on startup.
+- **Run `soniq setup` once per deploy.** Do not run it from every replica. See [going to production](production/going-to-production.md).
+- **Make handlers idempotent.** An idempotent handler gives the same end result when it runs more than once. Soniq guarantees *at-least-once* delivery. If a worker crashes after it runs your function but before it marks the job done, another worker runs the job again. To make a rerun harmless, use `INSERT ... ON CONFLICT DO UPDATE` instead of a plain insert. You can also check whether you already sent the email, or store an idempotency token with the side effect.
+- **Tune timeouts.** Every job has a default timeout of 300 seconds. Override it per job: `@soniq.job(name="reports.build", timeout=600)`.
 
-- **Use environment variables** instead of hardcoding `database_url`. Soniq reads `SONIQ_DATABASE_URL` automatically.
-- **Set `SONIQ_JOBS_MODULES`** so workers can import your job functions on startup.
-- **Run `soniq setup` only once per deploy**, not from every replica's startup. See [going to production](production/going-to-production.md).
-- **Make handlers idempotent** - meaning safe to run more than once with the same end result. Soniq guarantees *at-least-once* delivery: if a worker crashes after running your function but before marking the job done, the job will run again on another worker. This is normal for every job queue. The fix is to design your handler so a re-run is harmless: use database upserts (`INSERT ... ON CONFLICT DO UPDATE`) instead of plain inserts, check whether you already sent the email before sending it again, or store an idempotency token alongside the side effect.
-- **Tune timeouts.** Every job has a default 300-second timeout. Override per-job with `@soniq.job(name="reports.build", timeout=600)`.
+> **New to job queues?** The [tutorial](tutorial/01-defining-jobs.md) explains each term in depth. You do not need to learn all of this now.
 
-## Where to go next
+## Next steps
 
-**Just starting out?** Work through the [tutorial](tutorial/01-defining-jobs.md) in order. It is six chapters, takes about 30 minutes, and walks through every concept you will need.
+To learn each concept, work through the [tutorial](tutorial/01-defining-jobs.md). It has six chapters and takes about 30 minutes.
 
-**Already comfortable with job queues?** Skip ahead based on what you are doing:
+If you already know job queues, go to one of these pages:
 
-- [FastAPI guide](guides/fastapi.md) - the most common producer shape
-- [Going to production](production/going-to-production.md) - the eight things that matter for a healthy deploy
+- [FastAPI guide](guides/fastapi.md) - the most common producer setup
+- [Going to production](production/going-to-production.md) - the checklist for a healthy deploy
 - [Migrating from Celery](migration/from-celery.md) or [from RQ](migration/from-rq.md)
 
 ---
 
-*Working with an AI coding agent? Point it at [`AGENTS.md`](https://github.com/abhinavs/soniq/blob/main/AGENTS.md) and [`llms.txt`](llms.txt) - they cover the canonical patterns and the mistakes agents most often make.*
+*Working with an AI coding agent? Point it at [`AGENTS.md`](https://github.com/abhinavs/soniq/blob/main/AGENTS.md) and [`llms.txt`](llms.txt). They cover the canonical patterns and the mistakes agents make most often.*
 
 
 ---
@@ -131,10 +137,9 @@ The code above works, but you will want to tighten a few things before deploying
 
 *(source: docs/api/jobs.md)*
 
-# Jobs
+# Define, enqueue and schedule jobs
 
-Everything about defining, enqueueing, scheduling, and inspecting jobs.
-
+A job in Soniq is an async Python function that you register with `@soniq.job()`. Soniq stores each call to `enqueue()` as a row in PostgreSQL, and a worker runs the function later. This page covers defining, enqueueing, scheduling and inspecting jobs.
 
 ## @soniq.job decorator
 
@@ -158,17 +163,17 @@ All parameters are optional.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. When omitted, it is derived from `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
-| `retries` | `int` | `3` | Maximum retry attempts on failure. Alias: `max_retries`. |
-| `priority` | `int` | `100` | Lower number = higher priority. |
+| `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. The name must match the `task_name_pattern` setting, which by default means lowercase dotted segments such as `emails.send_email`. When omitted, Soniq derives the name from `f"{module}.{function_name}"`. This is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
+| `retries` | `int` | `3` | Maximum retries after the first failure. A job runs at most `retries + 1` times. Alias: `max_retries`. |
+| `priority` | `int` | `100` | A lower number runs first. |
 | `queue` | `str` | `"default"` | Queue name for this job. |
-| `unique` | `bool` | `False` | Deduplicate by arguments hash. If a matching job is already queued, the enqueue is skipped. |
+| `unique` | `bool` | `False` | Deduplicate by job name and argument hash. If a matching job is still `queued`, `enqueue()` creates no job and returns the id of the existing one. |
 | `retry_delay` | `int \| float \| list[int \| float]` | `0` | Seconds to wait before each retry. Pass a list to set per-attempt delays (e.g. `[1, 5, 30]`). |
-| `retry_backoff` | `bool` | `False` | Apply exponential backoff to `retry_delay`. |
+| `retry_backoff` | `bool` | `False` | Double the delay on each attempt. The base is `retry_delay`, or 1 second when `retry_delay` is `0`. |
 | `retry_max_delay` | `int \| float \| None` | `None` | Cap on retry delay in seconds. |
-| `retry_jitter` | `bool` | `True` | With `retry_backoff`, apply full jitter to the backoff delay. |
-| `timeout` | `int \| float \| None` | `None` | Per-job timeout in seconds. `None` uses the global `job_timeout` setting (default 300s). |
-| `validate` | `type[BaseModel] \| None` | `None` | Pydantic model for argument validation at enqueue time. Alias: `args_model`. |
+| `retry_jitter` | `bool` | `True` | With `retry_backoff`, pick a random delay between half of the backoff delay and the full delay. Ignored without `retry_backoff`. |
+| `timeout` | `int \| float \| None` | `None` | Per-job timeout in seconds. `None` uses the `job_timeout` setting (default 300 seconds). A timeout counts as a failure and follows the retry rules. |
+| `validate` | `type[BaseModel] \| None` | `None` | Pydantic model that checks the job arguments at enqueue time. Alias: `args_model`. |
 
 ```python
 @soniq.job(
@@ -189,7 +194,7 @@ async def process_payment(order_id: int, amount: float):
 Dispatches a registered job for processing. Three input shapes:
 
 ```python
-# 1. Callable (single-repo)
+# 1. Callable (same codebase)
 job_id = await soniq.enqueue(send_email, to="a@b.com", subject="Hi", body="Hello")
 
 # 2. String task name (cross-service / by-name)
@@ -206,17 +211,18 @@ job_id = await soniq.enqueue(send_email_ref, args={"to": "a@b.com", "subject": "
 
 ```python
 async def enqueue(
-    target,             # Callable, string task name, or TaskRef
+    target,             # Callable, string task name, or TaskRef (positional only)
+    /,
     *,
     args: dict | None = None,  # Function args (string / TaskRef shapes)
-    priority: int = None,      # Override the job's default priority
-    queue: str = None,         # Override the job's default queue
-    scheduled_at: datetime | timedelta | int | float = None,  # Run at a time (UTC), or after a delay
-    unique: bool = None,       # Override the job's default uniqueness
-    dedup_key: str = None,     # Custom deduplication key (instead of args hash)
-    connection = None,         # Asyncpg connection for transactional enqueue
-    **func_kwargs,             # Function args (callable shape)
-) -> str                       # Returns job UUID
+    priority: int | None = None,     # Override the job's default priority
+    queue: str | None = None,        # Override the job's default queue
+    scheduled_at: datetime | timedelta | int | float | None = None,  # Run at a time, or after a delay
+    unique: bool | None = None,      # Override the job's default uniqueness
+    dedup_key: str | None = None,    # Custom deduplication key (instead of args hash)
+    connection = None,               # Connection for transactional enqueue
+    **func_kwargs,                   # Function args (callable shape)
+) -> str                             # Returns the job UUID
 ```
 
 `target` is the first positional argument and selects the input shape:
@@ -225,12 +231,16 @@ async def enqueue(
 - **String task name**: function args travel in `args=dict`. Don't pass `**func_kwargs` (they would collide with enqueue options).
 - **`TaskRef`**: function args travel in `args=dict` and are validated against `ref.args_model` if set.
 
-All option parameters are optional. When omitted, the values from the `@soniq.job` registration apply (or system defaults if no local registration).
+All option parameters are optional. When you omit one, the value from the `@soniq.job()` registration applies. A job with no local registration gets priority 100, queue `default` and `max_retries + 1` attempts (from the `max_retries` setting).
+
+`scheduled_at` accepts a timezone-aware `datetime`, a `timedelta`, or a number of seconds from now. A naive `datetime` raises `ValueError`.
+
+`enqueue()` rejects bad arguments before it writes a row. It raises `SoniqError` with code `SONIQ_TASK_ARGS_INVALID` when an argument is not JSON-serializable, does not fit the handler signature, or fails the `validate=` model. It raises `SONIQ_UNKNOWN_TASK_NAME` when you enqueue an unregistered string name and `enqueue_validation` is `"strict"` (the default).
 
 ### Transactional enqueue
 
 Pass a `connection` to enqueue a job inside an existing database transaction.
-If the transaction rolls back, the job is never created.
+If the transaction rolls back, the job is never created. The connection must have an active transaction. Soniq accepts an `asyncpg` connection, a SQLAlchemy `AsyncSession` or `AsyncConnection`, and a `psycopg` `AsyncConnection`.
 
 ```python
 await soniq.ensure_initialized()
@@ -240,7 +250,7 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(fulfill_order, connection=conn, order_id=order_id)
 ```
 
-Transactional enqueue requires the PostgreSQL backend.
+Transactional enqueue requires the PostgreSQL backend. See [Transactional enqueue](../guides/transactional-enqueue.md) for the other connection types.
 
 
 ## job.enqueue() and job.options()
@@ -328,14 +338,14 @@ async def enqueue_many(
 ) -> list[str]
 ```
 
-On Postgres this issues one batched INSERT round-trip; on SQLite/Memory it loops over `create_job`. Each `args_list[i]` is validated against the registered `args_model` (if any) before any row is written.
+On PostgreSQL, `enqueue_many()` writes all rows with one batched INSERT. On SQLite and the in-memory backend, it inserts the rows one by one. Soniq checks every `args_list[i]` before it writes any row, so one bad item fails the whole call.
 
-`enqueue_many()` does not support `unique=True` or `dedup_key=`. If the registered job declares `unique=True`, or you need per-row dedup, call `enqueue()` in a loop instead.
+`enqueue_many()` has no `unique=` or `dedup_key=` option. If the registered job declares `unique=True`, `enqueue_many()` raises `TypeError`. For per-row deduplication, call `enqueue()` in a loop. An empty `args_list` returns `[]`.
 
 
 ## schedule()
 
-Schedule a job for future execution.
+Schedule a job to run at a later time. `schedule()` is `enqueue()` with `scheduled_at=run_at`.
 
 ```python
 from datetime import datetime, timezone
@@ -351,14 +361,14 @@ await soniq.schedule(
 ```python
 async def schedule(
     target,
-    run_at,            # UTC datetime, timedelta, or seconds-from-now (int/float)
+    run_at,            # Timezone-aware datetime, timedelta, or seconds from now (int/float)
     *,
     args: dict | None = None,
     **kwargs,
 ) -> str  # Returns job UUID
 ```
 
-`soniq.schedule()` is a thin wrapper around `soniq.enqueue()` that sets `scheduled_at=run_at`.
+`soniq.schedule()` passes `**kwargs` to `enqueue()`, so `kwargs` are job arguments for the callable shape. A naive `datetime` raises `ValueError`. For a recurring schedule, use `@soniq.periodic()`.
 
 
 ## @soniq.periodic()
@@ -390,15 +400,31 @@ The scheduler checks for due jobs every `--check-interval` seconds (default 60).
 
 | Parameter | Type | Description |
 |---|---|---|
-| `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). |
-| `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; ints are treated as seconds. |
-| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). Always pass `name`: without it the name falls back to `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. |
+| `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). Soniq validates the expression when the decorator runs. |
+| `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; numbers are seconds. The minimum is 1 second. |
+| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). Always pass `name`: without it the name falls back to `f"{module}.{function_name}"`, which is deprecated since 0.2.0 and warns. |
 
 Rules:
 - Specify exactly one of `cron=` or `every=`.
 - They cannot be combined.
 
 Requires a running `soniq scheduler` process to actually fire the jobs.
+
+
+## Snooze
+
+A handler returns `Snooze` to run again later without using a retry. Use it when the job must wait for something outside Soniq, such as a rate limit.
+
+```python
+from soniq import Snooze
+
+@soniq.job(name="sync.pull_orders")
+async def pull_orders():
+    if rate_limited():
+        return Snooze(seconds=60, reason="rate limited")
+```
+
+`Snooze(seconds, reason=None)` puts the job back in `queued` with a new run time. The attempt count does not go up. The `snooze_max_seconds` setting caps the delay (default 86400 seconds). Soniq fires no `after_job` or `on_error` hook for a snoozed run.
 
 
 ## JobContext
@@ -462,6 +488,7 @@ await soniq.scheduler.add(
     args={"region": "US"},
     queue="reports",
     priority=10,
+    max_attempts=3,
 )
 
 await soniq.scheduler.pause("reports.daily")
@@ -470,6 +497,8 @@ await soniq.scheduler.remove("reports.daily")
 schedules = await soniq.scheduler.list(status="active")
 sched = await soniq.scheduler.get("reports.daily")
 ```
+
+`add()` takes `target`, `cron`, `every`, `args`, `queue`, `priority`, `max_attempts` and `name`. Pass exactly one of `cron` or `every`. It returns the schedule name.
 
 Schedules are keyed by the resolved task name. Re-adding the same name
 updates the schedule in place rather than creating a duplicate.
@@ -486,6 +515,7 @@ from soniq import cron, daily, every, monthly, weekly
 every(5).minutes()                 # "*/5 * * * *"
 every(2).hours()                   # "0 */2 * * *"
 every(30).seconds()                # timedelta(seconds=30)
+every(2).days()                    # "0 0 */2 * *"
 daily().at("09:00")                # "0 9 * * *"
 weekly().on("monday").at("09:00")  # "0 9 * * 1"
 monthly().on_day(15).at("12:00")   # "0 12 15 * *"
@@ -503,21 +533,33 @@ into `@soniq.periodic(cron=...)` or `soniq.scheduler.add(cron=...)`.
 
 *(source: docs/api/worker.md)*
 
-# Worker
+# Run Soniq workers
 
-Workers fetch jobs from the database, execute them, and update their status. **The primary way to run a worker is the `soniq worker` CLI** -- run it from your process manager (systemd, Kubernetes, supervisord) and let the manager handle restarts and scaling. The `Worker` class and `soniq.run_worker()` are documented here for advanced use cases (tests, embedding, custom orchestration).
+A Soniq worker claims jobs from PostgreSQL, runs your handlers and records the result. Run workers with the `soniq worker` command from a process manager such as systemd, Kubernetes or supervisord. The manager restarts and scales them. The `Worker` class and `soniq.run_worker()` are documented here for advanced use cases (tests, embedding, custom orchestration).
 
 
 ## soniq worker
 
 ```bash
-soniq worker
-soniq worker --concurrency 8 --queues emails,billing
-soniq worker --run-once  # process available jobs once and exit
 soniq worker myapp.jobs:soniq  # import the module and use that Soniq instance
+soniq worker myapp.jobs:soniq --concurrency 8 --queues emails,billing
+soniq worker myapp.jobs:soniq --run-once  # process available jobs once and exit
+SONIQ_JOBS_MODULES=myapp.jobs soniq worker  # no app path: name the job modules
 ```
 
-Reads `SONIQ_DATABASE_URL` (and other `SONIQ_*` settings) from the environment. See the CLI reference for the full flag list.
+The command reads `SONIQ_DATABASE_URL` and the other `SONIQ_*` settings from the environment. Without an app path, the command exits with an error unless `SONIQ_JOBS_MODULES` or `--jobs-modules` names the job modules.
+
+| Flag | Default | Description |
+|---|---|---|
+| `APP` (positional) | none | `module:attribute` of your `Soniq` instance. |
+| `--concurrency` | `4` | Number of concurrent job tasks. |
+| `--queues` | all queues | Comma-separated queue names. |
+| `--jobs-modules` | none | Extra modules to import. Soniq merges them with `SONIQ_JOBS_MODULES`. |
+| `--run-once` | off | Process available jobs and exit. |
+| `--log-level` | `INFO` | Root logger level. Also read from `SONIQ_LOG_LEVEL`. |
+| `--database-url` | none | Overrides the instance's database URL. |
+
+See the [CLI reference](../cli/commands.md) for all commands.
 
 
 ## run_worker()
@@ -542,7 +584,9 @@ await soniq.run_worker(
 | `concurrency` | `int` | `4` | Number of concurrent asyncio tasks fetching and executing jobs. |
 | `run_once` | `bool` | `False` | Process all available jobs and exit. Useful for testing and cron-driven setups. |
 | `queues` | `list[str] \| None` | `None` | Restrict to these queue names. `None` means process all queues. This is the in-process default; the `soniq worker` CLI also defaults to all queues when `--queues` is omitted. |
-| `shutdown_event` | `asyncio.Event \| None` | `None` | Set it to shut the worker down and drain in-flight jobs. When you pass one, the worker installs no signal handlers. |
+| `shutdown_event` | `asyncio.Event \| None` | `None` | Set it to shut the worker down and drain in-flight jobs. When you pass one, the worker installs no signal handlers. Ignored when `run_once` is `True`. |
+
+On PostgreSQL, `run_worker()` raises `SoniqError` with code `SONIQ_POOL_TOO_SMALL` when `concurrency + pool_headroom` is greater than `pool_max_size`. Raise `pool_max_size` or lower `concurrency`.
 
 ### What happens during run_worker
 
@@ -559,19 +603,17 @@ settings:
 
 | Env var | Default | Description |
 |---|---|---|
-| `SONIQ_CONCURRENCY` | `4` | Default concurrency (overridden by `--concurrency` flag). |
 | `SONIQ_POLL_INTERVAL` | `5.0` | Seconds to wait when no jobs are available before polling again. Also the `LISTEN/NOTIFY` timeout. |
 | `SONIQ_HEARTBEAT_INTERVAL` | `5.0` | Seconds between heartbeat updates. |
 | `SONIQ_HEARTBEAT_TIMEOUT` | `300.0` | Seconds after which a worker with no heartbeat is considered stale. |
 | `SONIQ_CLEANUP_INTERVAL` | `300.0` | Seconds between expired-job and stale-worker cleanup runs. |
 | `SONIQ_ERROR_RETRY_DELAY` | `5.0` | Seconds to sleep after an unexpected worker-level error before resuming. |
-| `SONIQ_JOBS_MODULES` | (empty) | Comma-separated list of modules to import on worker startup. Required by the CLI unless you pass an app path (`soniq worker myapp.jobs:soniq`), which is imported for you. See [Job module discovery](../getting-started/installation.md#job-module-discovery). |
+| `SONIQ_SHUTDOWN_TIMEOUT` | `30.0` | Seconds that running jobs get to finish during shutdown. |
+| `SONIQ_SYNC_HANDLER_POOL_SIZE` | `8` | Threads that run sync (non-async) handlers. |
+| `SONIQ_JOBS_MODULES` | (empty) | Comma-separated list of modules to import on worker startup. The CLI needs it unless you pass an app path (`soniq worker myapp.jobs:soniq`), which Soniq imports for you. See [Job module discovery](../getting-started/installation.md#job-module-discovery). |
 
-!!! note "Queue selection"
-    The `soniq worker` CLI worker processes **all queues** when `--queues` is not passed.
-    There is no env-var equivalent on the CLI entrypoint; pass `--queues=name1,name2`
-    to scope a worker. `SONIQ_QUEUES` only affects the programmatic
-    `Soniq(queues=...)` setting, not the CLI worker default.
+!!! note "Concurrency and queue selection"
+    Soniq does not read `SONIQ_CONCURRENCY` or `SONIQ_QUEUES` when it starts a worker. The `soniq worker` command uses `--concurrency` (default 4) and processes all queues unless you pass `--queues name1,name2`.
 
 
 ## Worker class (advanced)
@@ -589,6 +631,7 @@ worker = Worker(
     registry=registry,     # A JobRegistry with registered jobs
     settings=settings,     # SoniqSettings (optional, uses global defaults)
     hooks=hooks,           # Dict of hook lists (optional)
+    middleware=None,       # List of middleware (optional)
 )
 ```
 
@@ -600,6 +643,11 @@ worker = Worker(
 | `registry` | `JobRegistry` | (required) | Job registry containing all `@soniq.job()` registrations. |
 | `settings` | `SoniqSettings \| None` | `None` | Settings instance. Falls back to global settings when `None`. |
 | `hooks` | `dict \| None` | `None` | Hook dictionary with keys `"before_job"`, `"after_job"`, `"on_error"`, each mapping to a list of callables. |
+| `middleware` | `list \| None` | `None` | Middleware callables, outermost first. |
+| `retry_policy` | `RetryPolicy \| None` | `None` | Computes the delay before each retry. |
+| `metrics_sink` | `MetricsSink \| None` | `None` | Receives job start and end events. |
+| `sync_executor` | `ThreadPoolExecutor \| None` | `None` | Thread pool for sync handlers. A `Soniq` instance supplies it. |
+| `sync_pool_semaphore` | `asyncio.Semaphore \| None` | `None` | Limits claimed sync jobs. A `Soniq` instance supplies it. |
 
 ### run()
 
@@ -609,10 +657,11 @@ async def run(
     concurrency: int = 4,
     run_once: bool = False,
     queues: list[str] | None = None,
+    shutdown_event: asyncio.Event | None = None,
 ) -> bool
 ```
 
-Returns `True` if any jobs were processed.
+Returns `True` if any jobs were processed. `shutdown_event` is ignored when `run_once` is `True`.
 
 ### run_once()
 
@@ -630,16 +679,16 @@ processed in one call.
 
 ## Graceful shutdown
 
-In continuous mode, the worker installs signal handlers for `SIGINT` and `SIGTERM`.
+In continuous mode, the worker installs signal handlers for `SIGINT`, `SIGTERM` and `SIGHUP`.
 On receiving either signal:
 
 1. The shutdown event is set and the worker stops taking new jobs.
 2. Running jobs get up to `shutdown_timeout` seconds (default 30) to finish.
-3. Async jobs still running after that are cancelled and put back in the queue with their attempt count kept. Sync handlers are not cancelled; the worker waits for the thread.
+3. Async jobs still running after that are cancelled and put back in the queue with their attempt count kept. Sync handlers are not cancelled. They get an extra `sync_handler_grace_seconds` (default: the `job_timeout` value), and after that the worker keeps waiting for the thread.
 4. The worker deregisters itself from the database.
 5. The `LISTEN/NOTIFY` connection is released.
 
-A second signal during shutdown forces an immediate exit.
+A second signal does not force an exit. To stop a stuck worker, send `SIGKILL`. Jobs run at least once, so make handlers idempotent.
 
 
 ## LISTEN/NOTIFY
@@ -660,11 +709,9 @@ the worker falls back to polling at `poll_interval`.
 
 *(source: docs/api/hooks.md)*
 
-# Hooks
+# Hooks and middleware for job events
 
-Hooks let you run code before and after every job, and when a job fails.
-They are useful for logging, metrics, tracing, and alerting without modifying
-your job functions.
+Hooks run your code before a Soniq job, after it succeeds, and when it fails. Use them for logging, metrics, tracing and alerting without changing your job functions. Middleware wraps the whole job call when you need more control.
 
 
 ## Registering hooks
@@ -687,7 +734,7 @@ async def log_failure(job_name: str, job_id: str, error: str, attempt: int):
     print(f"Failed {job_name} ({job_id}): {error} (attempt {attempt})")
 ```
 
-You can register multiple hooks for the same event. They run in registration order.
+You can register multiple hooks for the same event. They run in registration order. Soniq passes the arguments positionally, in the order shown below, so keep the argument order in your hook functions.
 
 
 ## Hook signatures
@@ -704,7 +751,7 @@ async def before_job_hook(job_name: str, job_id: str, attempt: int) -> None
 |---|---|---|
 | `job_name` | `str` | The registered job name (the `name=` you gave the decorator). |
 | `job_id` | `str` | UUID of the job. |
-| `attempt` | `int` | Current attempt number. |
+| `attempt` | `int` | Current attempt number, starting at 1. |
 
 ### @soniq.after_job
 
@@ -718,11 +765,11 @@ async def after_job_hook(job_name: str, job_id: str, duration_ms: float) -> None
 |---|---|---|
 | `job_name` | `str` | The registered job name. |
 | `job_id` | `str` | UUID of the job. |
-| `duration_ms` | `float` | Wall-clock execution time in milliseconds. |
+| `duration_ms` | `float` | Wall-clock execution time in milliseconds, rounded to 2 decimals. |
 
 ### @soniq.on_error
 
-Called when a job raises an exception. Runs before the retry/dead-letter decision.
+Called each time a job attempt fails, including the final attempt. Runs before the retry or dead-letter decision.
 
 ```python
 async def on_error_hook(job_name: str, job_id: str, error: str, attempt: int) -> None
@@ -753,11 +800,13 @@ before_job -> job function (raises) -> on_error
 `after_job` and `on_error` are mutually exclusive for a given execution.
 `before_job` always runs, even if the job will ultimately fail.
 
+A job that returns [`Snooze`](jobs.md#snooze) fires `before_job` but neither `after_job` nor `on_error`. A job whose stored arguments are corrupt goes to the dead-letter queue and fires no hooks. If you open a resource in `before_job` (such as a tracing span), do not rely on `after_job` or `on_error` alone to close it.
+
 
 ## Sync and async hooks
 
 Hooks can be either sync or async. Soniq inspects each hook at call time
-and awaits it if it is a coroutine function.
+and awaits it if it is a coroutine function. A sync hook runs on the event loop, so keep it fast.
 
 ```python
 # Async hook
@@ -780,6 +829,8 @@ hook never prevents a job from running or its result from being recorded.
 ```
 WARNING - Hook before_job failed: ConnectionError(...)
 ```
+
+The log message has the form `Hook <event> failed: <exception>`.
 
 This means hooks are safe for non-critical operations like metrics and logging.
 If you need a hook failure to stop job execution, handle that logic inside the
@@ -843,7 +894,7 @@ async def track_failure(job_name, job_id, error, attempt):
 @soniq.on_error
 async def alert_on_final_failure(job_name, job_id, error, attempt):
     # Look up the job's max_attempts from the registry
-    job_meta = soniq._get_job_registry().get_job(job_name)
+    job_meta = soniq.registry.get_job(job_name)
     if job_meta and attempt >= job_meta["max_retries"] + 1:
         await send_slack_message(
             f"Job {job_name} ({job_id}) moved to dead-letter queue: {error}"
@@ -882,6 +933,31 @@ async def end_span_error(job_name, job_id, error, attempt):
 ```
 
 
+## Middleware
+
+Middleware wraps every job call. Register it with `@soniq.middleware`. The first middleware you register is the outermost.
+
+```python
+import time
+from soniq import JobContext
+
+@soniq.middleware
+async def timing(ctx: JobContext, call_next):
+    started = time.monotonic()
+    try:
+        return await call_next(ctx)
+    finally:
+        print(f"{ctx.job_name} took {time.monotonic() - started:.2f}s")
+```
+
+Call `await call_next(ctx)` to continue the chain, and return its result.
+
+## Next steps
+
+- [Jobs API](jobs.md) - `JobContext`, `Snooze` and retry options.
+- [Custom metrics sink](../recipes/custom-metrics-sink.md) - send job metrics without hooks.
+
+
 ---
 
 
@@ -889,9 +965,9 @@ async def end_span_error(job_name, job_id, error, attempt):
 
 *(source: docs/guides/fastapi.md)*
 
-# FastAPI Integration
+# FastAPI background tasks with Soniq
 
-Soniq's Instance API fits FastAPI well. You get explicit lifecycle control, clean dependency injection, and easy testing.
+Soniq gives FastAPI durable background tasks stored in PostgreSQL. The `lifespan()` helper opens the connection pool, optionally starts a worker in the same process, and closes both on shutdown.
 
 ## Start with one process
 
@@ -921,7 +997,7 @@ async def create_user(name: str, email: str):
     return {"id": user.id, "queued": True}
 ```
 
-Run it with `uvicorn app.main:app`. That is all.
+Run it with `uvicorn app.main:app`.
 
 `lifespan()` takes these arguments:
 
@@ -934,17 +1010,17 @@ Run it with `uvicorn app.main:app`. That is all.
 
 On startup, the helper initializes the connection pool and starts the worker. On shutdown, it stops the worker and closes the pool.
 
-The worker stops in the normal graceful way. It stops taking new jobs and waits for running jobs to finish. If a job runs longer than `shutdown_timeout` (30 seconds by default), Soniq cancels it and puts it back in the queue. No job is lost. See the [shutdown contract](../_internals/contracts/shutdown.md) for the full rules.
+The worker stops in the normal graceful way. It stops taking new jobs and waits for running jobs to finish. If a job runs longer than `shutdown_timeout` (30 seconds by default), Soniq cancels it and puts it back in the queue. See the [shutdown contract](../_internals/contracts/shutdown.md) for the full rules.
 
-Handlers can run again after a crash, so write them to be idempotent.
+A job can run again after a crash, so write handlers to be idempotent.
 
 !!! warning "Run migrations at deploy time, not app startup"
     Use `soniq setup` in your deploy pipeline (CI step, Dockerfile entrypoint, k8s init container). Do not run it in the lifespan. Running migrations on every boot creates race conditions when many replicas start at the same time.
 
 !!! warning "One Uvicorn process only"
-    With `run_worker=True`, each Uvicorn worker process starts its own Soniq worker. If you run `uvicorn --workers 4`, or Gunicorn with many workers, you get four Soniq workers with the `concurrency` you set. This is safe, because Soniq workers never claim the same job twice. But the total number of jobs that run at once is `processes x concurrency`. The database pool also grows with each process. Set `concurrency` with this in mind, or move the worker to its own process (next section).
+    With `run_worker=True`, each Uvicorn process starts its own Soniq worker. With `uvicorn --workers 4`, or Gunicorn with four workers, you get four Soniq workers. This is safe, because Soniq workers never claim the same job twice. The number of jobs that run at once is `processes x concurrency`, and the database pool grows with each process. Set `concurrency` with this in mind, or move the worker to its own process (see the next section).
 
-Also keep CPU-heavy jobs out of the API process. A job that blocks the event loop slows down your HTTP requests.
+Keep CPU-heavy jobs out of the API process. A job that blocks the event loop slows down your HTTP requests.
 
 ### Chain your own lifespan
 
@@ -1002,7 +1078,9 @@ soniq worker --concurrency 4
 
 Your job code and your `enqueue()` calls do not change.
 
-## Coming from BackgroundTasks
+<a id="coming-from-backgroundtasks"></a>
+
+## Replace FastAPI BackgroundTasks with a durable job queue
 
 FastAPI's `BackgroundTasks` runs a function after the response is sent, in the same process. If the process stops, the task is lost. It has no retries and no queue.
 
@@ -1058,7 +1136,7 @@ async def create_order(product_id: int, quantity: int):
 
 ## Multiple instances
 
-Each `Soniq` instance is fully isolated. It has its own connection pool and job registry. This is useful for multi-tenant setups. The helper takes one instance, so close the others in your own lifespan:
+Each `Soniq` instance is isolated. It has its own connection pool and job registry. This is useful for multi-tenant setups. The helper takes one instance, so close the others in your own lifespan:
 
 ```python
 tenant_a = Soniq(database_url="postgresql://localhost/tenant_a")
@@ -1074,7 +1152,7 @@ app = FastAPI(lifespan=lifespan(tenant_a, extra=close_tenant_b))
 
 ## Borrowing a connection
 
-For workflows like [transactional enqueue](transactional-enqueue.md), borrow a connection from the backend:
+For [transactional enqueue](transactional-enqueue.md), borrow a connection from the backend:
 
 ```python
 await soniq.ensure_initialized()
@@ -1084,6 +1162,12 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
+## Next steps
+
+- [Transactional enqueue](transactional-enqueue.md) - enqueue a job in the same transaction as your data
+- [Testing](testing.md) - test jobs with the memory backend
+- [Going to production](../production/going-to-production.md) - deploy the API and worker
+
 
 ---
 
@@ -1092,23 +1176,23 @@ async with soniq.backend.acquire() as conn:
 
 *(source: docs/guides/transactional-enqueue.md)*
 
-# Transactional Enqueue
+# Transactional enqueue: add a job in the same PostgreSQL transaction
 
-Enqueue a job inside a database transaction. If the transaction rolls back, the job never enters the queue.
+Soniq can write a job row on the same PostgreSQL connection as your business data. If your transaction rolls back, the job rolls back too. This works with SQLAlchemy async, raw asyncpg, and psycopg 3.
 
 ## How it works
 
-When you pass `connection=conn` to `enqueue()`, the job row is inserted into `soniq_jobs` using that connection. The INSERT is part of your transaction, so the job only becomes visible to workers after `COMMIT`.
-
-Either both your business data and the job are committed, or neither is.
+When you pass `connection=conn` to `enqueue()`, Soniq inserts the job row into `soniq_jobs` on that connection. The INSERT is part of your transaction, so workers see the job only after `COMMIT`. Your business data and the job are either both committed or both rolled back.
 
 <a id="pattern-3-sqlalchemy-async"></a>
 
 ## Pattern 1: Pass your SQLAlchemy session
 
-If your app uses SQLAlchemy async, pass the `AsyncSession` as `connection=`. Soniq writes the job on the same connection, inside the same transaction:
+If your app uses SQLAlchemy async, pass the `AsyncSession` as `connection=`. Soniq writes the job on the same connection, in the same transaction:
 
 ```python
+import os
+
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 from soniq import Soniq
@@ -1148,13 +1232,13 @@ Rules:
 
 Soniq does not import SQLAlchemy unless you pass a SQLAlchemy object.
 
-## Raw asyncpg connections (still supported)
+## Raw asyncpg connections
 
-You can also pass any raw `asyncpg` connection inside an active transaction. It can come from Soniq's pool or from your own pool. The patterns below still work.
+You can also pass a raw `asyncpg` connection. It can come from Soniq's pool or from your own pool. The connection must be inside an active transaction. Without one, `enqueue()` raises a `SoniqError` with code `SONIQ_UNSUPPORTED_CONNECTION`.
 
 ## Pattern 2: Raw asyncpg via Soniq's pool
 
-The simplest pattern. Borrow a connection from Soniq's own backend pool. No second pool, no extraction step:
+Borrow a connection from Soniq's own backend pool. You need no second pool:
 
 ```python
 await soniq.ensure_initialized()
@@ -1164,11 +1248,11 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
-The `connection=conn` parameter is the only thing that changes from a normal enqueue call. Everything else works the same -- job options, priority, scheduling.
+The `connection=conn` parameter is the only thing that changes from a normal enqueue call. Job options, priority and scheduling work the same way.
 
 ## FastAPI route example
 
-A real-world order creation endpoint where the order record and the follow-up job are committed atomically:
+This order endpoint commits the order record and the follow-up job in one transaction:
 
 ```python
 from contextlib import asynccontextmanager
@@ -1209,7 +1293,7 @@ If the INSERT fails or anything else raises inside the transaction block, both t
 
 ## Pattern 3: Bring your own asyncpg pool
 
-If your app already manages its own `asyncpg.Pool` (common in apps that predate Soniq), you don't need to involve Soniq's pool at all. Pass the connection from *your* pool to `enqueue` and the job row goes through your transaction:
+If your app already manages its own `asyncpg.Pool`, you do not need Soniq's pool. Pass the connection from your pool to `enqueue()` and the job row goes through your transaction:
 
 ```python
 from contextlib import asynccontextmanager
@@ -1241,13 +1325,14 @@ async def create_order(product_id: int, quantity: int):
     return {"order_id": order_id}
 ```
 
-This is the cleanest pattern when you have an existing pool: there is no extraction step and no second pool to size. Soniq is a passenger on a connection your app already owned.
+With this pattern you have no second pool to size. Soniq uses a connection that your app already owns.
 
-> Both pools must point at the **same Postgres database**. Soniq's job tables and your application tables share one database; the connection just has to be in a transaction on that database.
+!!! note
+    The connection must point at the same PostgreSQL database that holds the Soniq tables.
 
 ## psycopg 3 connections
 
-You can pass a `psycopg.AsyncConnection` too. Soniq writes the job on that connection and does not commit. You commit or roll back as usual:
+You can pass a `psycopg.AsyncConnection` too. Soniq writes the job on that connection and does not commit. You commit or roll back yourself:
 
 ```python
 import psycopg
@@ -1260,9 +1345,9 @@ async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
 
 Install the driver with `pip install "soniq[psycopg]"`.
 
-## Pattern 4: Tortoise ORM (still supported)
+## Pattern 4: Tortoise ORM
 
-Tortoise exposes the raw `asyncpg` connection on the transaction context, but only via a private attribute. It works today; treat it as a soft API.
+Tortoise exposes the raw `asyncpg` connection on the transaction context only through a private attribute. The attribute works today, but Tortoise can change it in any release.
 
 ```python
 from tortoise.transactions import in_transaction
@@ -1275,36 +1360,42 @@ async def create_order(product_id: int, quantity: int):
             product_id=product_id,
             quantity=quantity,
         )
-        # conn._connection is the raw asyncpg connection. Private attribute,
-        # works in current Tortoise releases. A first-class Tortoise integration
-        # is on the roadmap.
+        # conn._connection is the raw asyncpg connection. It is a private
+        # Tortoise attribute, so it can break in a Tortoise upgrade.
         await soniq.enqueue(send_invoice, connection=conn._connection, order_id=order.id)
 ```
 
-If you'd like first-class Tortoise support that does not depend on a private attribute, please open an issue -- it's not a hard integration to write, we just want to gauge demand before adding the dependency.
+Soniq has no Tortoise integration. If you want one that does not depend on a private attribute, open an issue.
 
 ## Use cases
 
-**Order + invoice.** Create the order and enqueue the invoice generation in one transaction. No orphaned orders without invoices.
+**Order and invoice.** Create the order and enqueue the invoice job in one transaction. No order exists without its invoice job.
 
-**User signup + welcome email.** Insert the user row and enqueue the welcome email together. If the INSERT hits a unique constraint, no phantom email gets sent.
+**User signup and welcome email.** Insert the user row and enqueue the welcome email together. If the INSERT hits a unique constraint, Soniq queues no email.
 
-**Payment + receipt.** Record the payment and enqueue the receipt delivery atomically. No "payment recorded but receipt never sent" bugs.
+**Payment and receipt.** Record the payment and enqueue the receipt job in one transaction. A recorded payment always has a receipt job.
 
-The common thread: any workflow where "row exists but job is missing" would be a data integrity bug.
+Use this pattern when a row without its job would be a data integrity bug.
 
 ## Delivery semantics
 
 Transactional enqueue guarantees the job enters the queue if and only if the transaction commits. It does not guarantee single execution.
 
-Soniq provides **at-least-once delivery**. If a worker crashes after executing the job but before marking it done, stale worker recovery will re-queue it. Design your job functions to be idempotent -- use upserts, deduplication keys, or check-before-act patterns for side effects like sending emails or charging payments.
+Soniq provides **at-least-once delivery**. If a worker crashes after it runs the job but before it marks the job done, stale worker recovery puts the job back in the queue. Write idempotent handlers. Use upserts, deduplication keys, or check-before-act patterns for side effects such as sending emails or charging payments.
 
 ## What transactional enqueue does NOT guarantee
 
 - **Single execution.** The guarantee applies to enqueue only. Re-execution after worker crashes is still possible.
-- **Rollback after commit.** Once committed, the job is in the queue. You can cancel it with `soniq.cancel_job(job_id)`, but a fast worker might pick it up first.
+- **Rollback after commit.** After the commit, the job is in the queue. You can cancel it with `soniq.cancel_job(job_id)`, but a fast worker can claim it first.
 
-> **Note:** Transactional enqueue requires PostgreSQL. It is not available with the SQLite or Memory backends. Calling `enqueue(..., connection=conn)` on a non-PostgreSQL backend raises a `ValueError`.
+!!! note
+    Transactional enqueue needs PostgreSQL. With the SQLite or memory backend, `enqueue(..., connection=conn)` and `soniq.backend.acquire()` raise a `ValueError`.
+
+## Next steps
+
+- [FastAPI integration](fastapi.md) - set up the lifespan and the worker
+- [Common patterns](common-patterns.md) - deduplication and job results
+- [Troubleshooting](../troubleshooting.md) - fix `SONIQ_UNSUPPORTED_CONNECTION` errors
 
 
 ---
@@ -1314,49 +1405,49 @@ Soniq provides **at-least-once delivery**. If a worker crashes after executing t
 
 *(source: docs/reference/glossary.md)*
 
-# Glossary
+# Soniq glossary: job, worker, queue and dead-letter terms
 
-One-paragraph definitions for the words Soniq's docs use.
+This page defines the words Soniq's docs use for its PostgreSQL-backed Python background jobs, in one paragraph each.
 
 ## Job
 
-A unit of work. Either the function you decorate with `@soniq.job` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
+A unit of work. Either the function you decorate with `@soniq.job()` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
 
 ## Handler
 
-The Python function that runs when a job is processed. Registered via `@soniq.job`.
+The Python function that runs when a job is processed. Registered with `@soniq.job()`.
 
 ## Task name
 
-The string identifier under which a handler is registered. Set it with `@soniq.job(name="...")`. Without `name=`, Soniq derives `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
+The string identifier under which a handler is registered. Set it with `@soniq.job(name="...")`. If you omit `name=`, Soniq derives `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. The task name is the wire protocol for cross-service deployments. Producers refer to handlers by name, not by import.
 
 ## TaskRef
 
-A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref(name="billing.send_invoice", args_model=InvoiceArgs)` - the arguments are keyword-only. Use it for cross-service producer/consumer setups where the producer should not own the handler implementation. See [cross-service jobs](../guides/cross-service-jobs.md).
+A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref(name="billing.send_invoice", args_model=InvoiceArgs)` - the arguments are keyword-only. Use it when the producer must not own the handler code, as in a cross-service setup. See [cross-service jobs](../guides/cross-service-jobs.md).
 
 ## Worker
 
-A long-running process that polls (or receives `NOTIFY` for) jobs, claims them via `SELECT ... FOR UPDATE SKIP LOCKED`, and runs the handler. Started with `soniq worker`. Multiple workers can compete for the same queue safely.
+A long-running process that polls for jobs (or receives a PostgreSQL `NOTIFY`), claims them with `SELECT ... FOR UPDATE SKIP LOCKED`, and runs the handler. Start it with `soniq worker`. Several workers can safely take jobs from the same queue.
 
 ## Scheduler
 
-A separate long-running process (`soniq scheduler`) that evaluates `@soniq.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The CLI worker does not evaluate recurring jobs - that is intentional, so worker scaling does not duplicate scheduler work. Multiple scheduler instances coordinate via a Postgres advisory lock; only one does work at a time.
+A separate long-running process (`soniq scheduler`) that evaluates `@soniq.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The worker does not evaluate recurring jobs. This is intentional: scaling workers does not duplicate scheduler work. Several scheduler instances coordinate with a PostgreSQL advisory lock, and only one does work at a time.
 
 ## Queue
 
-A `varchar` column on `soniq_jobs` used for routing. Workers can be started with `--queues=foo,bar` to consume from a subset. Default queue name is `"default"`. Queues are not separate tables - just a routing tag.
+A `varchar` column on `soniq_jobs` used for routing. Start a worker with `--queues=foo,bar` to consume from a subset. The default queue name is `"default"`. Queues are not separate tables. A queue is a routing tag.
 
 ## Concurrency
 
-The number of in-flight jobs a single worker process will run at once. Default is 4. Tune up for I/O-bound workloads, down for CPU-bound. Set with `--concurrency` or `SONIQ_CONCURRENCY`.
+The number of jobs a single worker process runs at once. The default is 4. Raise it for I/O-bound workloads and lower it for CPU-bound ones. Set it with `soniq worker --concurrency N`, or with `concurrency=` on `run_worker()`.
 
 ## Heartbeat
 
-Periodic write each worker performs to `soniq_workers` to advertise liveness. If a worker stops heartbeating for `SONIQ_HEARTBEAT_TIMEOUT` seconds (default 300), surviving workers detect it as stale, reset its in-flight jobs to `queued`, and remove its row.
+A periodic write that each worker makes to `soniq_workers` to show it is alive. If a worker stops its heartbeat for `SONIQ_HEARTBEAT_TIMEOUT` seconds (default 300), the surviving workers mark it `stopped` and reset its in-flight jobs to `queued`.
 
 ## Dead-letter queue (DLQ)
 
-The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `soniq.dead_letter.list_dead_letter_jobs()`, `soniq.dead_letter.replay(dead_letter_id)`, or the `soniq dead-letter` CLI to inspect and recover them. See the [dead-letter Python API](../api/dead-letter.md).
+The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. To inspect and recover them, use `soniq.dead_letter.list_dead_letter_jobs()`, `soniq.dead_letter.replay(dead_letter_id)` or the `soniq dead-letter` CLI. See the [dead-letter Python API](../api/dead-letter.md).
 
 ## Replay
 
@@ -1364,12 +1455,12 @@ Re-running a dead-letter job by minting a fresh `soniq_jobs` row from it. The or
 
 ## At-least-once delivery
 
-Soniq's delivery guarantee. A job will run at least once but may run more than once if a worker crashes mid-handler before marking the row done. Handlers must be **idempotent** - rerunning them must produce the same end state. Soniq does not offer an exactly-once mode; nothing on Postgres alone can.
+Soniq's delivery guarantee. A job runs at least once. It can run more than once if a worker crashes in the handler before it marks the row done. Handlers must be **idempotent**: running them again must produce the same end state. Soniq has no exactly-once mode, because PostgreSQL alone cannot guarantee it.
 
 ## Transactional enqueue
 
-Enqueueing a job inside the same Postgres transaction as your business writes by passing `connection=conn` to `enqueue()`. If the transaction rolls back, the job row is also rolled back. The reason most teams pick a Postgres-backed queue. Postgres-only - SQLite and the in-memory backend do not support it.
+Enqueueing a job inside the same Postgres transaction as your business writes by passing `connection=conn` to `enqueue()`. If the transaction rolls back, the job row is also rolled back. It is the main reason to pick a PostgreSQL-backed queue. It works on PostgreSQL only - SQLite and the in-memory backend do not support it.
 
 ## Backend
 
-The storage layer. The production backend is `asyncpg` against PostgreSQL. SQLite and an in-memory backend exist for local development and tests; both have hard limitations (single-writer, no transactional enqueue, polling-only) and are not for production.
+The storage layer. The production backend is `asyncpg` against PostgreSQL. SQLite and an in-memory backend exist for local development and tests; both have hard limits (single writer, no transactional enqueue, polling only) and are not for production.

@@ -260,17 +260,19 @@ async def test_args_hash_works_off_the_soniq_search_path(app):
     assert got == compute_args_hash({"a": 1})
 
 
-async def _stranded_job(app, worker_status, hostname="box", pid=1):
+async def _stranded_job(app, worker_status, hostname="box", pid=1, silent_for=0):
     worker_id, job_id = uuid.uuid4(), uuid.uuid4()
     async with app.backend.acquire() as conn:
         await conn.execute(
             "INSERT INTO soniq_workers (id, hostname, pid, queues, concurrency,"
             " status, started_at, last_heartbeat)"
-            " VALUES ($1, $2, $3, '{default}', 1, $4, NOW(), NOW())",
+            " VALUES ($1, $2, $3, '{default}', 1, $4, NOW(),"
+            " NOW() - make_interval(secs => $5))",
             worker_id,
             hostname,
             pid,
             worker_status,
+            silent_for,
         )
         await conn.execute(
             "INSERT INTO soniq_jobs (id, job_name, args, status, worker_id)"
@@ -291,7 +293,8 @@ async def _status(app, job_id):
 @pytest.mark.asyncio
 async def test_cleanup_requeues_jobs_held_by_a_stopped_worker(app):
     # A job whose final write failed stays 'processing' after its worker exits.
-    stranded = await _stranded_job(app, "stopped")
+    # It is requeued once the worker's last heartbeat is older than the threshold.
+    stranded = await _stranded_job(app, "stopped", silent_for=600)
     running = await _stranded_job(app, "active", hostname="other")
 
     await app.backend.cleanup_stale_workers(stale_threshold_seconds=300)
@@ -302,7 +305,7 @@ async def test_cleanup_requeues_jobs_held_by_a_stopped_worker(app):
 
 @pytest.mark.asyncio
 async def test_worker_restarted_with_the_same_pid_can_register(app):
-    job_id = await _stranded_job(app, "active")
+    job_id = await _stranded_job(app, "active", silent_for=600)
     async with app.backend.acquire() as conn:
         # A finished job keeps its worker_id, which used to break the restart.
         await conn.execute(
@@ -343,6 +346,13 @@ async def test_second_worker_in_the_same_process_leaves_jobs_alone(app):
     await app.backend.update_heartbeat(first)
 
     # The first worker is alive and mid-job, so its job must not be requeued.
-    with pytest.raises(asyncpg.ForeignKeyViolationError):
-        await app.backend.register_worker(worker_id=str(uuid.uuid4()), **kwargs)
+    # The second registers under a hostname tagged with its own id.
+    second = str(uuid.uuid4())
+    await app.backend.register_worker(worker_id=second, **kwargs)
     assert await _status(app, job_id) == "processing"
+    async with app.backend.acquire() as conn:
+        hosts = await conn.fetch("SELECT id, hostname FROM soniq_workers")
+    assert {str(r["id"]): r["hostname"] for r in hosts} == {
+        first: "box",
+        second: f"box#{second[:8]}",
+    }

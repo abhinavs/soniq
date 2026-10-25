@@ -1,8 +1,10 @@
-# Hooks
+---
+description: Run code before and after every Soniq background job, or when a job fails. Covers before_job, after_job, on_error, middleware, and logging and metrics examples.
+---
 
-Hooks let you run code before and after every job, and when a job fails.
-They are useful for logging, metrics, tracing, and alerting without modifying
-your job functions.
+# Hooks and middleware for job events
+
+Hooks run your code before a Soniq job, after it succeeds, and when it fails. Use them for logging, metrics, tracing and alerting without changing your job functions. Middleware wraps the whole job call when you need more control.
 
 
 ## Registering hooks
@@ -25,7 +27,7 @@ async def log_failure(job_name: str, job_id: str, error: str, attempt: int):
     print(f"Failed {job_name} ({job_id}): {error} (attempt {attempt})")
 ```
 
-You can register multiple hooks for the same event. They run in registration order.
+You can register multiple hooks for the same event. They run in registration order. Soniq passes the arguments positionally, in the order shown below, so keep the argument order in your hook functions.
 
 
 ## Hook signatures
@@ -42,7 +44,7 @@ async def before_job_hook(job_name: str, job_id: str, attempt: int) -> None
 |---|---|---|
 | `job_name` | `str` | The registered job name (the `name=` you gave the decorator). |
 | `job_id` | `str` | UUID of the job. |
-| `attempt` | `int` | Current attempt number. |
+| `attempt` | `int` | Current attempt number, starting at 1. |
 
 ### @soniq.after_job
 
@@ -56,11 +58,11 @@ async def after_job_hook(job_name: str, job_id: str, duration_ms: float) -> None
 |---|---|---|
 | `job_name` | `str` | The registered job name. |
 | `job_id` | `str` | UUID of the job. |
-| `duration_ms` | `float` | Wall-clock execution time in milliseconds. |
+| `duration_ms` | `float` | Wall-clock execution time in milliseconds, rounded to 2 decimals. |
 
 ### @soniq.on_error
 
-Called when a job raises an exception. Runs before the retry/dead-letter decision.
+Called each time a job attempt fails, including the final attempt. Runs before the retry or dead-letter decision.
 
 ```python
 async def on_error_hook(job_name: str, job_id: str, error: str, attempt: int) -> None
@@ -91,11 +93,13 @@ before_job -> job function (raises) -> on_error
 `after_job` and `on_error` are mutually exclusive for a given execution.
 `before_job` always runs, even if the job will ultimately fail.
 
+A job that returns [`Snooze`](jobs.md#snooze) fires `before_job` but neither `after_job` nor `on_error`. A job whose stored arguments are corrupt goes to the dead-letter queue and fires no hooks. If you open a resource in `before_job` (such as a tracing span), do not rely on `after_job` or `on_error` alone to close it.
+
 
 ## Sync and async hooks
 
 Hooks can be either sync or async. Soniq inspects each hook at call time
-and awaits it if it is a coroutine function.
+and awaits it if it is a coroutine function. A sync hook runs on the event loop, so keep it fast.
 
 ```python
 # Async hook
@@ -118,6 +122,8 @@ hook never prevents a job from running or its result from being recorded.
 ```
 WARNING - Hook before_job failed: ConnectionError(...)
 ```
+
+The log message has the form `Hook <event> failed: <exception>`.
 
 This means hooks are safe for non-critical operations like metrics and logging.
 If you need a hook failure to stop job execution, handle that logic inside the
@@ -181,7 +187,7 @@ async def track_failure(job_name, job_id, error, attempt):
 @soniq.on_error
 async def alert_on_final_failure(job_name, job_id, error, attempt):
     # Look up the job's max_attempts from the registry
-    job_meta = soniq._get_job_registry().get_job(job_name)
+    job_meta = soniq.registry.get_job(job_name)
     if job_meta and attempt >= job_meta["max_retries"] + 1:
         await send_slack_message(
             f"Job {job_name} ({job_id}) moved to dead-letter queue: {error}"
@@ -218,3 +224,28 @@ async def end_span_error(job_name, job_id, error, attempt):
         span.set_status(trace.StatusCode.ERROR, error)
         span.end()
 ```
+
+
+## Middleware
+
+Middleware wraps every job call. Register it with `@soniq.middleware`. The first middleware you register is the outermost.
+
+```python
+import time
+from soniq import JobContext
+
+@soniq.middleware
+async def timing(ctx: JobContext, call_next):
+    started = time.monotonic()
+    try:
+        return await call_next(ctx)
+    finally:
+        print(f"{ctx.job_name} took {time.monotonic() - started:.2f}s")
+```
+
+Call `await call_next(ctx)` to continue the chain, and return its result.
+
+## Next steps
+
+- [Jobs API](jobs.md) - `JobContext`, `Snooze` and retry options.
+- [Custom metrics sink](../recipes/custom-metrics-sink.md) - send job metrics without hooks.

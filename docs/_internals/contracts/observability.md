@@ -22,6 +22,7 @@ Status values passed to `record_job_end`:
 - `"failed"`       handler raised; worker will retry per `RetryPolicy`
 - `"dead_letter"`  retries exhausted, or `RetryPolicy` returned `None`
 - `"snoozed"`      handler returned `Snooze(...)`; not a retry burn
+- `"reclaimed"`    the job was requeued and claimed by another worker before this run finished; its outcome was dropped
 
 The Protocol is intentionally narrow. Sinks should treat each call as
 fire-and-forget, and must not raise: an exception from the sink

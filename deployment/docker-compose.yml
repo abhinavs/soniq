@@ -1,188 +1,133 @@
-# Soniq Docker Compose Configuration
-# Production-ready setup with PostgreSQL, worker, and dashboard
+# Soniq on Docker Compose: PostgreSQL, a one-shot schema setup, a worker,
+# the scheduler and the dashboard.
+#
+# Put your job code in ./app (it is mounted as the `myapp` package) and set
+# POSTGRES_PASSWORD and SONIQ_DASHBOARD_API_KEY in a .env file next to this one.
 
-version: "3.8"
+x-soniq-env: &soniq-env
+  SONIQ_DATABASE_URL: postgresql://soniq:${POSTGRES_PASSWORD:-change_me}@postgres:5432/soniq_prod
+  SONIQ_LOG_LEVEL: INFO
+  SONIQ_JOBS_MODULES: myapp.jobs
 
 services:
-  # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
-    container_name: soniq_postgres
+    image: postgres:18-alpine
     restart: always
     environment:
       POSTGRES_DB: soniq_prod
       POSTGRES_USER: soniq
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
-      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/18/data.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U soniq -d soniq_prod"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - soniq_network
 
-  # Soniq Worker
+  # Applies Soniq's migrations, then exits. Workers start after it succeeds.
+  soniq_setup:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *soniq-env
+    volumes:
+      - ./app:/app/myapp
+    command: ["soniq", "setup"]
+    restart: "no"
+
   soniq_worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: soniq_worker
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
+      soniq_setup:
+        condition: service_completed_successfully
     environment:
-      SONIQ_DATABASE_URL: postgresql://soniq:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/soniq_prod
-      SONIQ_LOG_LEVEL: INFO
-      SONIQ_DASHBOARD_ENABLED: "true"
-      SONIQ_JOBS_MODULES: myapp.jobs
-      # The dedicated soniq_scheduler service below handles @periodic jobs.
+      <<: *soniq-env
+      # The soniq_scheduler service runs @periodic jobs, so silence the
+      # worker's "no scheduler" warning.
       SONIQ_SCHEDULER_SUPPRESS_WARNING: "1"
     volumes:
-      - ./logs:/app/logs
-      - ./app:/app/myapp # Mount your application code
+      - ./app:/app/myapp
     command: ["soniq", "worker", "--concurrency=4"]
-    healthcheck:
-      test: ["CMD", "soniq", "health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - soniq_network
+    # SIGTERM starts a drain of up to SONIQ_SHUTDOWN_TIMEOUT (30s). Give it
+    # longer than that before Docker sends SIGKILL.
+    stop_grace_period: 45s
     deploy:
       resources:
         limits:
           memory: 512M
           cpus: "1.0"
-        reservations:
-          memory: 256M
-          cpus: "0.5"
 
-  # Soniq Scheduler (required if you use @periodic jobs).
-  # Run as a single sidecar process; multiple instances coordinate via the
-  # `soniq.maintenance` advisory lock so duplicates are safe but redundant.
+  # Needed only if you use @periodic jobs. Extra copies are safe: they
+  # elect one leader through a PostgreSQL advisory lock.
   soniq_scheduler:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: soniq_scheduler
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      SONIQ_DATABASE_URL: postgresql://soniq:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/soniq_prod
-      SONIQ_LOG_LEVEL: INFO
-      SONIQ_SCHEDULING_ENABLED: "true"
-      SONIQ_JOBS_MODULES: myapp.jobs
+      soniq_setup:
+        condition: service_completed_successfully
+    environment: *soniq-env
     volumes:
-      - ./logs:/app/logs
       - ./app:/app/myapp
     command: ["soniq", "scheduler"]
-    networks:
-      - soniq_network
     deploy:
       resources:
         limits:
           memory: 256M
           cpus: "0.5"
-        reservations:
-          memory: 128M
-          cpus: "0.25"
 
-  # Soniq Dashboard (optional)
+  # Optional web UI. Read-only unless SONIQ_DASHBOARD_WRITE_ENABLED=true.
   soniq_dashboard:
     build:
       context: .
       dockerfile: Dockerfile.dashboard
-    container_name: soniq_dashboard
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
-      soniq_worker:
-        condition: service_healthy
+      soniq_setup:
+        condition: service_completed_successfully
     environment:
-      SONIQ_DATABASE_URL: postgresql://soniq:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/soniq_prod
-      SONIQ_LOG_LEVEL: INFO
+      <<: *soniq-env
+      # Required when the dashboard listens on 0.0.0.0. Without a key it
+      # accepts only localhost Host headers. Send it as X-API-Key.
+      SONIQ_DASHBOARD_API_KEY: ${SONIQ_DASHBOARD_API_KEY:?set SONIQ_DASHBOARD_API_KEY}
     ports:
-      - "8000:8000"
-    volumes:
-      - ./logs:/app/logs
-    command: ["soniq", "dashboard", "--host=0.0.0.0", "--port=8000"]
+      - "127.0.0.1:6161:6161"
+    command: ["soniq", "dashboard", "--host=0.0.0.0", "--port=6161"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # The HTML page at / does not need the API key.
+      test: ["CMD", "curl", "-fsS", "http://localhost:6161/"]
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - soniq_network
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: "0.5"
-        reservations:
-          memory: 128M
-          cpus: "0.25"
 
-  # Optional: Priority Worker for urgent jobs
+  # Optional: a worker for the urgent queue only.
+  # Start it with: docker compose --profile priority up
   soniq_priority_worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: soniq_priority_worker
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
+      soniq_setup:
+        condition: service_completed_successfully
     environment:
-      SONIQ_DATABASE_URL: postgresql://soniq:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/soniq_prod
-      SONIQ_LOG_LEVEL: INFO
-      SONIQ_JOBS_MODULES: myapp.jobs
+      <<: *soniq-env
+      SONIQ_SCHEDULER_SUPPRESS_WARNING: "1"
     volumes:
-      - ./logs:/app/logs
       - ./app:/app/myapp
     command: ["soniq", "worker", "--concurrency=2", "--queues=urgent"]
+    stop_grace_period: 45s
     profiles:
-      - priority # Optional service - enable with --profile priority
-    healthcheck:
-      test: ["CMD", "soniq", "health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - soniq_network
-
-  # Optional: Nginx reverse proxy
-  nginx:
-    image: nginx:alpine
-    container_name: soniq_nginx
-    restart: always
-    depends_on:
-      - soniq_dashboard
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - ./logs/nginx:/var/log/nginx
-    profiles:
-      - proxy # Optional service - enable with --profile proxy
-    networks:
-      - soniq_network
+      - priority
 
 volumes:
   postgres_data:
-    driver: local
-
-networks:
-  soniq_network:
-    driver: bridge

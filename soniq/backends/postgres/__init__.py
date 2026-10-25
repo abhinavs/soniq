@@ -31,9 +31,6 @@ _INSERT_JOB_SQL = """
 # index counts. The existing queued row is then looked up by
 # _FIND_DUPLICATE_SQL. If a worker claims it in between, insert again.
 _ON_CONFLICT_SQL = " ON CONFLICT DO NOTHING RETURNING id"
-
-# Tells this process's worker rows apart from a dead process with the same pid.
-_PROCESS_ID = str(uuid.uuid4())
 _FIND_DUPLICATE_SQL = """
     SELECT id FROM soniq_jobs
     WHERE status = 'queued'
@@ -47,11 +44,35 @@ _PSYCOPG_INSERT_JOB_SQL = re.sub(r"\$\d+", "%s", _INSERT_JOB_SQL)
 _PSYCOPG_FIND_DUPLICATE_SQL = re.sub(r"\$\d+", "%s", _FIND_DUPLICATE_SQL)
 
 
+def _claim_guard(n: int) -> str:
+    """WHERE fragment that limits an outcome write to the claim that made it.
+
+    ``$n`` is the attempt count the worker claimed. NULL skips the check.
+    Each claim bumps ``attempts``, so after a stale-worker requeue and a
+    new claim the old worker's write matches nothing.
+    """
+    return f"AND (${n}::int IS NULL OR (status = 'processing' AND attempts = ${n}))"
+
+
 def _pool_json(value: Any) -> str:
     """JSONB encoder for connections in Soniq's pool. Same as 0.1.0, so code
     that writes its own JSONB through ``soniq.backend.acquire()`` keeps working.
     Soniq's own args and results are checked as strict JSON before they get here."""
     return json.dumps(value, default=str)
+
+
+def _pool_json_loads(text: str) -> Any:
+    """Decode JSONB, or hand back the raw text if Python can't.
+
+    Postgres accepts JSON that json.loads rejects: ints over 4300 digits,
+    nesting deeper than the recursion limit. Raising here would fail the
+    whole query, so one such row would wedge every worker's claim. The
+    worker dead-letters a job whose args come back as a string.
+    """
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return text
 
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
@@ -60,7 +81,7 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec(
         "jsonb",
         encoder=_pool_json,
-        decoder=json.loads,
+        decoder=_pool_json_loads,
         schema="pg_catalog",
     )
 
@@ -112,6 +133,9 @@ class PostgresBackend:
         self._pool_min = pool_min_size
         self._pool_max = pool_max_size
         self._pool: Optional[asyncpg.Pool] = None
+        # register_worker kwargs by worker id, so a heartbeat that finds its
+        # row deleted can put it back.
+        self._registrations: dict[str, dict] = {}
 
     @staticmethod
     def _should_skip_lock() -> bool:
@@ -280,7 +304,7 @@ class PostgresBackend:
             scheduled_at,
             producer_id,
         )
-        if not (unique or dedup_key):
+        if not unique and dedup_key is None:
             await conn.execute(_INSERT_JOB_SQL, *params)
             result_id = job_id
         else:
@@ -334,7 +358,7 @@ class PostgresBackend:
         )
         result_id: Optional[str] = job_id
         async with conn.cursor() as cur:
-            if not (unique or dedup_key):
+            if not unique and dedup_key is None:
                 await cur.execute(_PSYCOPG_INSERT_JOB_SQL, params)
             else:
                 for _ in range(_DEDUP_ATTEMPTS):
@@ -510,44 +534,49 @@ class PostgresBackend:
         *,
         result_ttl: Optional[int] = None,
         result: Any = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         uid = uuid.UUID(job_id)
         # Skip the result column write when the job returned None - most jobs are -> None.
         async with self.acquire() as conn:
             async with conn.transaction():
                 if result_ttl is not None and result_ttl == 0:
-                    await conn.execute(
-                        "DELETE FROM soniq_jobs WHERE id = $1",
+                    status = await conn.execute(
+                        f"DELETE FROM soniq_jobs WHERE id = $1 {_claim_guard(2)}",
                         uid,
+                        claimed_attempts,
                     )
                 elif result is None:
                     ttl = result_ttl if result_ttl is not None else 3600
-                    await conn.execute(
-                        """
+                    status = await conn.execute(
+                        f"""
                         UPDATE soniq_jobs
                         SET status = 'done',
                             expires_at = NOW() + ($2 || ' seconds')::INTERVAL,
                             updated_at = NOW()
-                        WHERE id = $1
+                        WHERE id = $1 {_claim_guard(3)}
                         """,
                         uid,
                         str(ttl),
+                        claimed_attempts,
                     )
                 else:
                     ttl = result_ttl if result_ttl is not None else 3600
-                    await conn.execute(
-                        """
+                    status = await conn.execute(
+                        f"""
                         UPDATE soniq_jobs
                         SET status = 'done',
                             result = $3,
                             expires_at = NOW() + ($2 || ' seconds')::INTERVAL,
                             updated_at = NOW()
-                        WHERE id = $1
+                        WHERE id = $1 {_claim_guard(4)}
                         """,
                         uid,
                         str(ttl),
                         result,
+                        claimed_attempts,
                     )
+        return _rows_affected(status) == 1
 
     async def mark_job_failed(
         self,
@@ -556,41 +585,45 @@ class PostgresBackend:
         attempts: int,
         error: str,
         retry_delay: Optional[float] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         uid = uuid.UUID(job_id)
         async with self.acquire() as conn:
             async with conn.transaction():
                 if retry_delay and retry_delay > 0:
-                    await conn.execute(
-                        """
+                    status = await conn.execute(
+                        f"""
                         UPDATE soniq_jobs
                         SET status = 'queued',
                             attempts = $1,
                             last_error = $2,
                             scheduled_at = NOW() + ($3 || ' seconds')::INTERVAL,
                             updated_at = NOW()
-                        WHERE id = $4
+                        WHERE id = $4 {_claim_guard(5)}
                         """,
                         attempts,
                         error,
                         str(retry_delay),
                         uid,
+                        claimed_attempts,
                     )
                 else:
-                    await conn.execute(
-                        """
+                    status = await conn.execute(
+                        f"""
                         UPDATE soniq_jobs
                         SET status = 'queued',
                             attempts = $1,
                             last_error = $2,
                             scheduled_at = NULL,
                             updated_at = NOW()
-                        WHERE id = $3
+                        WHERE id = $3 {_claim_guard(4)}
                         """,
                         attempts,
                         error,
                         uid,
+                        claimed_attempts,
                     )
+        return _rows_affected(status) == 1
 
     async def mark_job_dead_letter(
         self,
@@ -600,18 +633,20 @@ class PostgresBackend:
         error: str,
         reason: str,
         tags: Optional[dict] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         # DLQ Option A: move source row to soniq_dead_letter_jobs in one transaction.
         # SELECT FOR UPDATE prevents concurrent cancel/recovery from racing with the move.
         uid = uuid.UUID(job_id)
         async with self.acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
-                    "SELECT * FROM soniq_jobs WHERE id = $1 FOR UPDATE",
+                    f"SELECT * FROM soniq_jobs WHERE id = $1 {_claim_guard(2)} FOR UPDATE",
                     uid,
+                    claimed_attempts,
                 )
                 if row is None:
-                    return
+                    return False
                 await conn.execute(
                     """
                     INSERT INTO soniq_dead_letter_jobs (
@@ -619,14 +654,16 @@ class PostgresBackend:
                         attempts, last_error, dead_letter_reason,
                         original_created_at, moved_to_dead_letter_at, tags
                     ) VALUES (
-                        $1, $2, $3, $4, $5, $6,
-                        $7, $8, $9,
-                        $10, NOW(), $11
+                        $1, $2, (SELECT args FROM soniq_jobs WHERE id = $1),
+                        $3, $4, $5,
+                        $6, $7, $8,
+                        $9, NOW(), $10
                     )
                     """,
                     uid,
                     row["job_name"],
-                    row["args"],
+                    # args is copied in SQL: row["args"] is the raw text when
+                    # Python couldn't decode it, and must not be re-encoded.
                     row["queue"] or "default",
                     # These dead-letter columns are NOT NULL, unlike soniq_jobs.
                     row["priority"] if row["priority"] is not None else 100,
@@ -645,6 +682,7 @@ class PostgresBackend:
                     "DELETE FROM soniq_jobs WHERE id = $1",
                     uid,
                 )
+        return True
 
     async def nack_job(self, job_id: str) -> None:
         uid = uuid.UUID(job_id)
@@ -669,27 +707,30 @@ class PostgresBackend:
         delay_seconds: float,
         attempts: int,
         reason: Optional[str] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         uid = uuid.UUID(job_id)
         # SNOOZE: prefix in last_error lets tooling distinguish snoozes from real failures without a schema change.
         reason_text = f"SNOOZE: {reason}" if reason else "SNOOZE"
         async with self.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(
-                    """
+                status = await conn.execute(
+                    f"""
                     UPDATE soniq_jobs
                     SET status = 'queued',
                         attempts = $1,
                         scheduled_at = NOW() + ($2 || ' seconds')::INTERVAL,
                         last_error = $3,
                         updated_at = NOW()
-                    WHERE id = $4
+                    WHERE id = $4 {_claim_guard(5)}
                     """,
                     attempts,
                     str(delay_seconds),
                     reason_text,
                     uid,
+                    claimed_attempts,
                 )
+        return _rows_affected(status) == 1
 
     async def cancel_job(self, job_id: str) -> bool:
         uid = uuid.UUID(job_id)
@@ -872,14 +913,25 @@ class PostgresBackend:
         concurrency: int,
         metadata: Optional[dict] = None,
     ) -> None:
+        self._registrations[worker_id] = dict(
+            hostname=hostname,
+            pid=pid,
+            queues=queues,
+            concurrency=concurrency,
+            metadata=metadata,
+        )
         uid = uuid.UUID(worker_id)
-        metadata = {**(metadata or {}), "process_id": _PROCESS_ID}
+        # ponytail: the threshold comes from env/global settings, not the
+        # Soniq(...) instance. It only matters when two rows share host and pid.
+        stale = str(get_settings().heartbeat_timeout)
         async with self.acquire() as conn:
             async with conn.transaction():
-                # A row with our hostname and pid from another process belongs
-                # to a dead one, e.g. a container restarted in place as pid 1.
-                # Requeue what it held and delete it: done jobs still reference
-                # its id, so changing the id in place breaks the foreign key.
+                # A row with our hostname and pid whose heartbeat is stale
+                # belongs to a dead process, e.g. a container restarted in
+                # place as pid 1. Requeue what it held and delete it: done jobs
+                # still reference its id, so changing the id in place breaks
+                # the foreign key. A fresh heartbeat means a live worker (two
+                # host-network containers can both be pid 1), so leave it be.
                 await conn.execute(
                     """
                     UPDATE soniq_jobs
@@ -888,48 +940,37 @@ class PostgresBackend:
                       AND worker_id IN (
                         SELECT id FROM soniq_workers
                         WHERE hostname = $1 AND pid = $2
-                          AND metadata->>'process_id' IS DISTINCT FROM $3
+                          AND last_heartbeat < NOW() - ($3 || ' seconds')::INTERVAL
                       )
                     """,
                     hostname,
                     pid,
-                    _PROCESS_ID,
+                    stale,
                 )
                 await conn.execute(
                     """
                     DELETE FROM soniq_workers
                     WHERE hostname = $1 AND pid = $2
-                      AND metadata->>'process_id' IS DISTINCT FROM $3
+                      AND last_heartbeat < NOW() - ($3 || ' seconds')::INTERVAL
                     """,
                     hostname,
                     pid,
-                    _PROCESS_ID,
+                    stale,
                 )
-                # ponytail: a second worker in the same process (tests only;
-                # the CLI and lifespan run one per process) takes over the row,
-                # as in 0.1.0. One row per worker needs a new unique key.
-                await conn.execute(
-                    """
+                insert = """
                     INSERT INTO soniq_workers
                         (id, hostname, pid, queues, concurrency, status, started_at, metadata)
                     VALUES ($1, $2, $3, $4, $5, 'active', NOW(), $6)
-                    ON CONFLICT (hostname, pid)
-                    DO UPDATE SET
-                        id = EXCLUDED.id,
-                        queues = EXCLUDED.queues,
-                        concurrency = EXCLUDED.concurrency,
-                        status = 'active',
-                        last_heartbeat = NOW(),
-                        started_at = NOW(),
-                        metadata = EXCLUDED.metadata
-                    """,
-                    uid,
-                    hostname,
-                    pid,
-                    queues,
-                    concurrency,
-                    metadata,
-                )
+                    ON CONFLICT (hostname, pid) DO NOTHING
+                    RETURNING id
+                    """
+                args = (uid, hostname, pid, queues, concurrency, metadata)
+                if await conn.fetchval(insert, *args) is None:
+                    # A live worker holds (hostname, pid), so tell this row
+                    # apart by its own id. The unique key stays as it is.
+                    await conn.execute(
+                        insert, uid, f"{hostname}#{str(uid)[:8]}", *args[2:]
+                    )
 
     async def update_heartbeat(
         self,
@@ -938,17 +979,27 @@ class PostgresBackend:
     ) -> None:
         uid = uuid.UUID(worker_id)
         async with self.acquire() as conn:
-            await conn.execute(
+            # Setting status back to active undoes a stale sweep that ran
+            # while this worker's event loop was stalled.
+            result = await conn.execute(
                 """
                 UPDATE soniq_workers
-                SET last_heartbeat = NOW(), metadata = coalesce($2, metadata)
+                SET last_heartbeat = NOW(), status = 'active',
+                    metadata = coalesce($2, metadata)
                 WHERE id = $1
                 """,
                 uid,
                 metadata,
             )
+        registration = self._registrations.get(worker_id)
+        if _rows_affected(result) == 0 and registration is not None:
+            # A worker that took us for dead deleted our row. Without it
+            # every claim fails on the soniq_jobs foreign key.
+            logger.warning("Worker %s row is missing; registering again", worker_id)
+            await self.register_worker(worker_id=worker_id, **registration)
 
     async def mark_worker_stopped(self, worker_id: str) -> None:
+        self._registrations.pop(worker_id, None)
         uid = uuid.UUID(worker_id)
         async with self.acquire() as conn:
             await conn.execute(
@@ -1043,9 +1094,12 @@ class PostgresBackend:
                     str(stale_threshold_seconds),
                 )
 
-                # Requeue jobs held by any worker that isn't active: just
-                # marked stale, or stopped while a job was still processing
-                # (say its final write failed). NULL worker_id means a
+                # Requeue jobs held by any worker whose heartbeat is stale,
+                # whatever its status: a worker stopped with a job still
+                # processing (say its final write failed) is caught once its
+                # last heartbeat ages out. Status alone can't tell: a 0.1.0
+                # worker never sets itself back to active after a sweep, and
+                # a stalled worker can recover. NULL worker_id means a
                 # run_once worker, which has no row, so leave those alone.
                 await conn.execute(
                     """
@@ -1055,9 +1109,11 @@ class PostgresBackend:
                       AND j.worker_id IS NOT NULL
                       AND NOT EXISTS (
                         SELECT 1 FROM soniq_workers w
-                        WHERE w.id = j.worker_id AND w.status = 'active'
+                        WHERE w.id = j.worker_id
+                          AND w.last_heartbeat >= NOW() - ($1 || ' seconds')::INTERVAL
                       )
-                    """
+                    """,
+                    str(stale_threshold_seconds),
                 )
 
                 return len(stale_rows)
@@ -1079,13 +1135,17 @@ class PostgresBackend:
         """Try a session-scoped advisory lock. Yields True if acquired, False if already held by another session."""
         key = advisory_key(name)
         async with self.acquire() as conn:
-            acquired = await conn.fetchval("SELECT pg_try_advisory_lock($1)", key)
+            acquired = await conn.fetchval(
+                "SELECT pg_catalog.pg_try_advisory_lock($1::bigint)", key
+            )
             try:
                 yield bool(acquired)
             finally:
                 if acquired:
                     try:
-                        await conn.fetchval("SELECT pg_advisory_unlock($1)", key)
+                        await conn.fetchval(
+                            "SELECT pg_catalog.pg_advisory_unlock($1::bigint)", key
+                        )
                     except Exception as e:
                         logger.warning(
                             "Failed to release advisory lock %r: %s", name, e

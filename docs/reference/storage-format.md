@@ -1,6 +1,10 @@
-# Storage format
+---
+description: Soniq storage format 1: PostgreSQL tables, columns and SQL functions (soniq_enqueue, soniq_get_job) to enqueue and read background jobs from any language.
+---
 
-Soniq keeps every job in PostgreSQL as plain rows and plain JSON. This page is the contract for those rows. Code in any language can read them with nothing but a Postgres driver and a JSON parser, and it can write jobs that a Soniq worker will run.
+# Soniq storage format: PostgreSQL job tables and SQL API
+
+Soniq keeps every job in PostgreSQL as plain rows and plain JSON. This page is the contract for those rows. Code in any language can read them with a Postgres driver and a JSON parser, and can write jobs that a Soniq worker runs.
 
 This is format 1. It came in with Soniq 0.2.0.
 
@@ -34,7 +38,7 @@ One row per job.
 | `args_hash` | `text` | Set only for unique jobs. See [`args_hash`](#args_hash). |
 | `status` | `text` | `queued`, `processing`, `done` or `cancelled`. |
 | `attempts` | `int` | How many times a worker has started this job. Insert `0`. |
-| `max_attempts` | `int` | Total attempts allowed, so retries plus one. |
+| `max_attempts` | `int` | Total attempts allowed, so retries plus one. Defaults to `4`. `NULL` makes the worker use the handler's `retries`. |
 | `queue` | `text` | Queue name. `default` unless you route it. |
 | `priority` | `int` | Lower runs first. Default `100`. |
 | `unique_job` | `boolean` | `true` for a unique job. |
@@ -55,7 +59,9 @@ A failed job doesn't get a status of its own. It goes back to `queued` with a la
 
 ## Enqueue from any language
 
-Call `soniq_enqueue()`. It is a plain SQL function, so any Postgres driver can call it, and it does what Python's `enqueue` does: it checks the job name and args, computes `args_hash` for unique jobs, returns the id of a queued duplicate instead of failing, and wakes idle workers.
+Call `soniq_enqueue()`. It is a plain SQL function, so any Postgres driver can call it. It checks that the job name matches the pattern and that args are a JSON object, computes `args_hash` for unique jobs, returns the id of a queued duplicate instead of failing, and wakes idle workers.
+
+It can't see your handler, so it doesn't check args against its signature the way Python's `enqueue` does. A job whose args don't fit the handler fails on every attempt and lands in the dead-letter table as `max_retries_exceeded`.
 
 ```sql
 SELECT soniq_enqueue('billing.send_invoice', '{"order_id": 123}');
@@ -66,10 +72,10 @@ SELECT soniq_enqueue(
   queue        => 'billing',
   priority     => 10,                          -- lower runs first, default 100
   run_at       => now() + interval '1 hour',   -- default: now
-  max_attempts => 4,                           -- retries plus one, default 4
+  max_attempts => 4,                           -- retries plus one, default 4; NULL uses the handler's retries
   unique_job   => true,
   dedup_key    => 'invoice-123',
-  producer_id  => 'checkout-go',               -- default: application_name
+  producer_id  => 'checkout-go',               -- default: application_name, or session_user if that's empty
   job_id       => '6f1c...'::uuid              -- default: a random UUID
 );
 ```
@@ -78,7 +84,13 @@ It returns the job's id. Call it inside your own transaction and the job exists 
 
 The handler's decorator settings don't apply here. A job enqueued from SQL gets the `queue`, `priority` and `max_attempts` you pass, or the defaults above, not the `queue=` or `retries=` on `@soniq.job()`. The same goes for `unique=`: pass `unique_job => true` yourself.
 
-Bad input raises SQLSTATE `22023`, with the Soniq error code in the error's `HINT`: `SONIQ_INVALID_TASK_NAME` for a name that doesn't match the pattern, `SONIQ_TASK_ARGS_INVALID` for args that aren't a JSON object. A `job_id` that already exists raises `23505`.
+Bad input raises SQLSTATE `22023`, with the Soniq error code in the error's `HINT`:
+
+- `SONIQ_INVALID_TASK_NAME` for a name that doesn't match the pattern.
+- `SONIQ_TASK_ARGS_INVALID` for args that aren't a JSON object, that hold a number too big for a 64-bit float (`1e400`, which Python would read as `inf`), or that nest 500 or more levels deep.
+- `SONIQ_INVALID_MAX_ATTEMPTS` for a `max_attempts` below 1.
+
+A `job_id` that already exists raises `23505`. Args holding a NUL character (`\u0000`) fail with `22P05` before `soniq_enqueue` runs, because `jsonb` can't store it.
 
 Job names are checked against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`. If your Python side sets a different `task_name_pattern`, set the same one for the database:
 
@@ -107,6 +119,22 @@ GRANT USAGE ON SCHEMA public TO checkout_service;
 GRANT EXECUTE ON FUNCTION soniq_enqueue, soniq_get_job TO checkout_service;
 ```
 
+On Postgres 14 and older every role can create objects in `public` unless you revoke it. The functions call built-ins by their `pg_catalog` names, so a planted function can't run with their owner's rights, but a planted overload can still make a call ambiguous and break enqueueing. If the roles sharing the database don't fully trust each other, you must run this on Postgres 14 and older (Postgres 15 does it by default):
+
+```sql
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+### Trust model
+
+Everyone granted `soniq_enqueue` shares one namespace. Dedup keys, unique hashes and job ids are not scoped to a producer, so a producer that reuses another's `dedup_key` gets that producer's job id back instead of a new job. It can also park a job under a key first and block the real one.
+
+`soniq_get_job` returns the status, result and last error of any job to any role that can execute it, whoever enqueued it.
+
+If your producers don't trust each other, give each a prefix for its dedup keys (`billing:order-123`), keep secrets out of job results, or use separate databases.
+
+`producer_id` defaults to the connection's `application_name`, and any client can set that to anything. Treat it as a label for debugging, not as proof of who enqueued a job.
+
 ### Raw INSERT
 
 If you can't call a function, insert the row yourself:
@@ -125,7 +153,7 @@ Jobs that failed for good. The row keeps the original `id`, `job_name`, `args`, 
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `dead_letter_reason` | `text` | `max_retries_exceeded`, `permanent_failure`, `job_not_found` or `invalid_arguments`. |
+| `dead_letter_reason` | `text` | Why the job failed for good. Workers write `max_retries_exceeded`, `permanent_failure`, `job_not_found` or `invalid_arguments`. |
 | `original_created_at` | `timestamptz` | When the job was first enqueued. |
 | `moved_to_dead_letter_at` | `timestamptz` | When it landed here. |
 | `resurrection_count` | `int` | How many times it was replayed. |
@@ -180,7 +208,8 @@ Unique jobs (`unique_job = true`) carry a hash of their `args`. A partial unique
    - Every other character below U+0020, and U+007F, becomes `\u00XX` in lowercase hex, so DEL is `\u007f`.
    - Every non-ASCII character becomes `\uXXXX` in lowercase hex, with surrogate pairs above U+FFFF. `é` is `\u00e9` and `😀` is `\ud83d\ude00`.
    - `/` is not escaped.
-4. Take the SHA-256 of the UTF-8 bytes and write it as lowercase hex.
+4. Write numbers the way Postgres prints them back from `jsonb`: integers as digits, other numbers in plain decimal with no exponent (`1e16` as `10000000000000000`, `1e-7` as `0.0000001`), and negative zero as `0.0`.
+5. Take the SHA-256 of the UTF-8 bytes and write it as lowercase hex.
 
 Test vector:
 
@@ -192,7 +221,9 @@ args_hash: 4679a46d38de4bf4d70793166c09d90fb32fa2f36cac5f9193000b4e17bc2c9c
 
 `soniq_args_hash(args jsonb)` in the database computes the same hash, so you can check your own implementation against it.
 
-Floats are the weak spot. Languages don't agree on how to print them (`1.0` or `1`, `1e+16` or `10000000000000000.0`), so two producers can hash the same value differently. Keep floats out of the args of unique jobs, or send them as strings.
+Floats are the weak spot. Python keeps `1.0` and `1` apart, and so does `jsonb`, but other languages often don't, so two producers can hash the same value differently. Keep floats out of the args of unique jobs, or send them as strings.
+
+Python turns non-string dict keys into strings first, as `json.dumps` does, so `{10: "x"}` hashes like `{"10": "x"}`. Args of a unique job can nest at most 499 levels deep, in Python and in SQL.
 
 ## Not language neutral yet
 

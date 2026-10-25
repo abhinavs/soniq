@@ -1,11 +1,12 @@
 """In-memory storage backend for unit tests. No persistence, no external dependencies."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
-from soniq.backends.helpers import no_transactional_enqueue
+from soniq.backends.helpers import no_transactional_enqueue, to_json
 
 if TYPE_CHECKING:
     from soniq.types import QueueStats
@@ -20,6 +21,16 @@ _REJECT_DEAD_LETTER_MSG = (
 def _reject_dead_letter_status(status: Any) -> None:
     if status == _REJECTED_JOB_STATUS:
         raise ValueError(_REJECT_DEAD_LETTER_MSG)
+
+
+def _still_claimed(job: Optional[dict], claimed_attempts: Optional[int]) -> bool:
+    # Same check as the SQL backends: an outcome only lands on the claim
+    # that produced it. None skips the check.
+    if job is None:
+        return False
+    if claimed_attempts is None:
+        return True
+    return job["status"] == "processing" and job["attempts"] == claimed_attempts
 
 
 class MemoryBackend:
@@ -80,7 +91,7 @@ class MemoryBackend:
                     ):
                         return str(existing["id"])
 
-            if dedup_key:
+            if dedup_key is not None:
                 for existing in self._jobs.values():
                     if (
                         existing.get("dedup_key") == dedup_key
@@ -92,7 +103,9 @@ class MemoryBackend:
             self._jobs[job_id] = {
                 "id": job_id,
                 "job_name": job_name,
-                "args": args,
+                # Round-trip through JSON like Postgres and SQLite do, so
+                # handlers see lists not tuples, values not Enums, str keys.
+                "args": json.loads(to_json(args)),
                 "args_hash": args_hash,
                 "status": "queued",
                 "attempts": 0,
@@ -165,11 +178,12 @@ class MemoryBackend:
         *,
         result_ttl: Optional[int] = None,
         result: Any = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         async with self._lock:
             job = self._jobs.get(job_id)
-            if not job:
-                return
+            if not _still_claimed(job, claimed_attempts):
+                return False
             if result_ttl is not None and result_ttl == 0:
                 del self._jobs[job_id]
             else:
@@ -183,6 +197,7 @@ class MemoryBackend:
                     job["expires_at"] = datetime.now(timezone.utc) + timedelta(
                         seconds=result_ttl
                     )
+            return True
 
     async def mark_job_failed(
         self,
@@ -191,11 +206,12 @@ class MemoryBackend:
         attempts: int,
         error: str,
         retry_delay: Optional[float] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         async with self._lock:
             job = self._jobs.get(job_id)
-            if not job:
-                return
+            if not _still_claimed(job, claimed_attempts):
+                return False
             job["status"] = "queued"
             job["attempts"] = attempts
             job["last_error"] = error
@@ -208,6 +224,7 @@ class MemoryBackend:
             else:
                 job["scheduled_at"] = None
             job["updated_at"] = datetime.now(timezone.utc)
+            return True
 
     async def mark_job_dead_letter(
         self,
@@ -217,12 +234,13 @@ class MemoryBackend:
         error: str,
         reason: str,
         tags: Optional[dict] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         # DLQ Option A: the lock makes the copy-and-delete atomic for all other coroutines.
         async with self._lock:
             job = self._jobs.get(job_id)
-            if not job:
-                return
+            if not _still_claimed(job, claimed_attempts):
+                return False
             now = datetime.now(timezone.utc)
             self._dead_letter_jobs[job_id] = {
                 "id": job_id,
@@ -242,6 +260,7 @@ class MemoryBackend:
                 "created_at": now,
             }
             del self._jobs[job_id]
+            return True
 
     async def nack_job(self, job_id: str) -> None:
         async with self._lock:
@@ -263,13 +282,14 @@ class MemoryBackend:
         delay_seconds: float,
         attempts: int,
         reason: Optional[str] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         from datetime import timedelta
 
         async with self._lock:
             job = self._jobs.get(job_id)
-            if not job:
-                return
+            if not _still_claimed(job, claimed_attempts):
+                return False
             job["status"] = "queued"
             job["attempts"] = attempts
             job["scheduled_at"] = datetime.now(timezone.utc) + timedelta(
@@ -277,6 +297,7 @@ class MemoryBackend:
             )
             job["last_error"] = f"SNOOZE: {reason}" if reason else "SNOOZE"
             job["updated_at"] = datetime.now(timezone.utc)
+            return True
 
     async def cancel_job(self, job_id: str) -> bool:
         async with self._lock:

@@ -1,6 +1,10 @@
+---
+description: Deliver webhooks reliably from Python with Soniq and PostgreSQL: HMAC-SHA256 signing, retry schedule, idempotency by event ID and transactional enqueue.
+---
+
 # Recipe: Webhook Delivery
 
-A pattern for reliably delivering webhooks to external services with aggressive retries, idempotency, and HMAC signing.
+This recipe delivers webhooks from Soniq background jobs on PostgreSQL. It uses a retry schedule, an idempotency check on the event ID, and HMAC-SHA256 signing.
 
 ## The job
 
@@ -9,13 +13,12 @@ import hashlib
 import hmac
 import json
 import aiohttp
-from soniq import Soniq
-from soniq.job import JobContext
+from soniq import JobContext, Soniq
 
 soniq = Soniq(database_url="postgresql://localhost/myapp")
 
 
-@soniq.job(name="webhooks.deliver_webhook", queue="webhooks", max_retries=5, retry_delay=[1, 5, 30, 120, 600])
+@soniq.job(name="webhooks.deliver_webhook", queue="webhooks", retries=5, retry_delay=[1, 5, 30, 120, 600])
 async def deliver_webhook(
     url: str,
     event: str,
@@ -115,7 +118,7 @@ async def mark_delivered(event_id: str):
 
 **Dedicated queue.** Webhook delivery is I/O-bound (waiting on external HTTP responses) and failure-prone. A separate `"webhooks"` queue means slow or failing endpoints don't starve your other jobs.
 
-**10-second HTTP timeout.** Don't let a hanging endpoint tie up a worker slot forever. 10 seconds is generous for a webhook receiver. If they can't respond in time, retry later.
+**10-second HTTP timeout.** A hanging endpoint must not hold a worker slot. 10 seconds is enough for a webhook receiver. If the receiver is slower, the job fails and Soniq retries it later.
 
 ## Payload format
 
@@ -135,7 +138,7 @@ Follow a consistent structure for all webhook payloads:
 
 ## Headers
 
-Include these headers with every delivery so receivers can route, verify, and deduplicate:
+Include these headers with every delivery so receivers can route, verify and deduplicate each delivery:
 
 | Header | Description |
 | --- | --- |
@@ -144,6 +147,8 @@ Include these headers with every delivery so receivers can route, verify, and de
 | `X-Webhook-Delivery` | Unique delivery ID for deduplication |
 | `X-Webhook-Signature` | HMAC-SHA256 signature (`sha256=...`) |
 | `User-Agent` | Your app identifier |
+
+Soniq's built-in webhook sender also sends `X-Webhook-Timestamp` (Unix seconds) and two signatures. `X-Webhook-Signature` signs the body only and is kept for existing receivers. `X-Webhook-Signature-V2` signs `f"{timestamp}.{body}"`. New receivers must verify the V2 header. They must also reject requests whose timestamp is more than a few minutes old. Otherwise an attacker can replay a captured request.
 
 ## Transactional enqueue
 

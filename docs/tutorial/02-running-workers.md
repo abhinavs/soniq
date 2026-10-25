@@ -1,34 +1,40 @@
-# 2. Running workers
+---
+description: Run Soniq workers for Python background jobs on PostgreSQL. Covers soniq worker flags, concurrency, pool sizing, heartbeats, graceful shutdown and crash recovery.
+---
+
+# 2. Run Soniq workers: concurrency, shutdown and crash recovery
 
 > **Beginner** - 8 minutes. Starting workers, concurrency, graceful shutdown.
 
-A *worker* is a long-running Python process that fetches jobs from the database and runs them. You typically run one or more workers per host, and your process manager (systemd, Kubernetes, supervisord) keeps them alive.
+A *worker* is a long-running Python process that claims jobs from PostgreSQL and runs them. Start it with `soniq worker`. Run one or more workers per host, and let your process manager (systemd, Kubernetes, supervisord) keep them alive.
 
-Soniq workers are async - they use `asyncio` tasks, not threads. One worker process can handle many concurrent jobs at once on a single event loop.
+Soniq workers are async. They use `asyncio` tasks, not threads. One worker process runs many jobs at the same time on one event loop.
 
 ## Starting a worker
 
-The primary way to run a worker is the CLI:
+Start a worker with the CLI:
 
 ```bash
 soniq worker
 soniq worker --concurrency 8 --queues emails,billing
 ```
 
-**Run-once mode** processes all available jobs and exits. Useful for testing and cron-style batch processing:
+**Run-once mode** processes all ready jobs and exits. Use it for tests and cron-driven runs:
 
 ```bash
 soniq worker --run-once
 ```
 
-Each invocation supervises one worker process. Run it from your process manager (systemd, Kubernetes Deployment, supervisord) and let the manager handle restarts and scaling. The programmatic `soniq.run_worker(...)` entry point exists for tests and embedded scenarios; do not use it for production deployments -- you lose the process-manager safety net (restart-on-crash, log capture, graceful-shutdown timeouts).
+Each `soniq worker` command starts one worker process. Run it from your process manager and let the manager restart and scale it. The `soniq.run_worker(...)` method exists for tests and embedded use. Do not use it in production, because you lose restart-on-crash, log capture, and shutdown timeouts.
+
+The worker needs to know your job modules. Set `SONIQ_JOBS_MODULES`, or pass an app path such as `soniq worker myapp.jobs:soniq`. See [Job module discovery](../getting-started/installation.md#job-module-discovery).
 
 ## Concurrency model
 
-Each worker runs a configurable number of asyncio tasks (default: 4). These tasks share a single event loop and compete for jobs using a semaphore. This means:
+Each worker runs a set number of asyncio tasks (default: 4). Set the number with `--concurrency`. The tasks share one event loop and use a semaphore to limit how many jobs run at once. Therefore:
 
-- I/O-bound jobs (HTTP calls, database queries, email sending) scale well with higher concurrency.
-- CPU-bound jobs block the event loop. Wrap them in `asyncio.to_thread()`:
+- I/O-bound jobs (HTTP calls, database queries, email) scale well with higher concurrency.
+- CPU-bound jobs block the event loop. Move the CPU work to a thread with `asyncio.to_thread()`:
 
 ```python
 @soniq.job(name="reports.generate_pdf")
@@ -41,11 +47,11 @@ async def generate_pdf(report_id: str):
 
 ## Connection pool sizing
 
-The connection pool should be large enough to handle your worker concurrency plus headroom for internal connections (LISTEN/NOTIFY listener and heartbeat writer).
+The connection pool must be large enough for your worker concurrency plus the internal connections (the LISTEN/NOTIFY listener and the heartbeat writer).
 
 The formula: `pool_max_size >= concurrency + pool_headroom`
 
-Defaults: `pool_max_size=20`, `pool_headroom=2`. Soniq warns at startup if your pool is too small for the configured concurrency.
+The defaults are `pool_max_size=20` and `pool_headroom=2`. Soniq logs a warning at startup if the pool is too small for the concurrency.
 
 ```bash
 export SONIQ_POOL_MAX_SIZE=30
@@ -55,39 +61,39 @@ soniq worker --concurrency 25
 
 ## Job pickup: LISTEN/NOTIFY
 
-When a job is enqueued, Soniq sends a PostgreSQL `NOTIFY` on the `soniq_new_job` channel. Workers listening on that channel wake up immediately and compete for the job using `SELECT ... FOR UPDATE SKIP LOCKED`. The winner processes it; the losers move on.
+When you enqueue a job, Soniq sends a PostgreSQL `NOTIFY` on the `soniq_new_job` channel. Workers that listen on the channel wake up at once. They compete for the job with `SELECT ... FOR UPDATE SKIP LOCKED`. One worker wins and runs the job. The other workers continue to wait.
 
-This makes job pickup near-instant (typically under 10ms) without polling overhead.
+This gives fast job pickup without constant polling.
 
-> **Note:** LISTEN/NOTIFY is a PostgreSQL feature. SQLite and memory backends fall back to polling at the configured `poll_interval` (default: 5 seconds).
+> **Note:** LISTEN/NOTIFY is a PostgreSQL feature. The SQLite and memory backends poll at the `poll_interval` setting (default: 5 seconds).
 
 ## Heartbeat system
 
-Workers send periodic heartbeats so Soniq can detect which workers are alive.
+Workers send a heartbeat at a fixed interval. Soniq uses the heartbeats to find out which workers are alive.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `SONIQ_HEARTBEAT_INTERVAL` | `5s` | How often a worker writes a heartbeat |
-| `SONIQ_HEARTBEAT_TIMEOUT` | `300s` | After this long without a heartbeat, a worker is considered stale |
+| `SONIQ_HEARTBEAT_INTERVAL` | `5` (seconds) | How often a worker writes a heartbeat |
+| `SONIQ_HEARTBEAT_TIMEOUT` | `300` (seconds) | A worker with no heartbeat for this long is stale |
 
-The heartbeat is a simple timestamp update in the `soniq_workers` table. The dashboard and `soniq inspect` CLI command use it to show live worker status.
+A heartbeat is a timestamp update in the `soniq_workers` table. The dashboard and the `soniq inspect` command use it to show worker status.
 
 ## Graceful shutdown
 
-Workers handle `SIGINT` (Ctrl+C) and `SIGTERM`:
+A worker handles `SIGINT` (Ctrl+C) and `SIGTERM`. When it gets either signal, it does these steps:
 
 1. Stop accepting new jobs.
 2. Wait for in-flight jobs to finish.
 3. Mark the worker as stopped in the database.
 4. Close the connection pool.
 
-This makes Soniq safe in Docker, Kubernetes, and systemd environments. Send `SIGTERM` and the worker drains gracefully.
+This is safe in Docker, Kubernetes, and systemd. Send `SIGTERM` and the worker drains its jobs and exits.
 
 ## Crash recovery
 
-If a worker is killed with `SIGKILL` or dies from an OOM, it cannot run its shutdown sequence. In-flight jobs are left in `processing` status and will not be picked up by other workers automatically.
+A worker that gets `SIGKILL` or dies from an out-of-memory kill cannot run its shutdown steps. Its in-flight jobs stay in `processing` status until the worker's heartbeat is older than `SONIQ_HEARTBEAT_TIMEOUT` and a cleanup runs.
 
-To recover these jobs:
+To recover these jobs at once, run:
 
 ```bash
 # Show stale workers
@@ -97,24 +103,30 @@ soniq inspect --stale
 soniq inspect --cleanup
 ```
 
-The cleanup operation marks stale workers as stopped and resets their in-flight jobs back to `queued` status so they can be retried.
+The cleanup marks stale workers as stopped. It also sets their in-flight jobs back to `queued`, so another worker runs them.
 
-> **Warning:** In production, run `soniq inspect --cleanup` on a schedule (e.g., via cron) or rely on the periodic cleanup that running workers perform automatically every 5 minutes.
+Running workers also do this cleanup on their own every 5 minutes (the `cleanup_interval` setting). One worker does the cleanup at a time. You only need `soniq inspect --cleanup` when no worker is running or when you want the recovery to happen sooner.
 
 ## Worker lifecycle hooks
 
-Register hooks on the app to run code before/after every job or on errors:
+Register hooks on the app to run code before every job, after every job, or on errors. Soniq passes the hook arguments by position, in the order shown:
 
 ```python
 @soniq.before_job
-async def log_job_start(job_name, job_id, args):
+async def log_job_start(job_name, job_id, attempt):
     logger.info(f"Starting {job_name} ({job_id})")
 
 @soniq.after_job
-async def log_job_complete(job_name, job_id, result):
+async def log_job_complete(job_name, job_id, duration_ms):
     logger.info(f"Completed {job_name} ({job_id})")
 
 @soniq.on_error
-async def log_job_error(job_name, job_id, error):
+async def log_job_error(job_name, job_id, error, attempt):
     logger.error(f"Failed {job_name} ({job_id}): {error}")
 ```
+
+A failing hook is logged and ignored. It never blocks the job.
+
+## Next steps
+
+Continue with [chapter 3: retries](03-retries.md).

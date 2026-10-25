@@ -1,6 +1,10 @@
-# PostgreSQL Tuning
+---
+description: Tune PostgreSQL for Soniq - connection pool sizing, PgBouncer session versus transaction mode, LISTEN/NOTIFY and server settings for a Python job queue.
+---
 
-Soniq runs on PostgreSQL in production. This guide covers connection pooling, PgBouncer integration, and the things that catch people off guard.
+# Tune PostgreSQL for Soniq workers
+
+Soniq runs on PostgreSQL in production. This page covers connection pool sizing, PgBouncer, and LISTEN/NOTIFY behavior.
 
 ## Connection pool settings
 
@@ -27,9 +31,9 @@ Soniq uses connections for:
 | Worker heartbeat | 1 | Periodic |
 | Cleanup / scheduler | 1 (shared) | Periodic |
 
-**Total per worker process** = `concurrency + 2-3`
+**Total per worker process** = `concurrency + SONIQ_POOL_HEADROOM` (default headroom is 2)
 
-With the default concurrency of 4, budget about 7 connections per worker process. If you run 3 worker processes at concurrency 4, you need roughly 21 connections total.
+With the default concurrency of 4, budget 6 connections per worker process. If you run 3 worker processes at concurrency 4, you need 18 connections in total.
 
 Set `pool_max_size` accordingly. If your pool is too small, workers will block waiting for a connection. If it's too large, you waste PostgreSQL backend slots.
 
@@ -39,7 +43,7 @@ Set `pool_max_size` accordingly. If your pool is too small, workers will block w
 
 ```bash
 # Per worker: 8 (jobs) + 2 (headroom) = 10 connections
-export SONIQ_CONCURRENCY=8
+# Start each worker with: soniq worker myapp.jobs:soniq --concurrency 8
 export SONIQ_POOL_MIN_SIZE=5
 export SONIQ_POOL_MAX_SIZE=12
 export SONIQ_POOL_HEADROOM=2
@@ -52,7 +56,7 @@ export SONIQ_POOL_HEADROOM=2
 
 If you run PgBouncer between Soniq and PostgreSQL, the pooling mode matters a lot.
 
-### Session mode -- works fine
+### Session mode works
 
 In session mode, PgBouncer assigns a server connection for the lifetime of a client connection. This is fully compatible with Soniq because `LISTEN/NOTIFY` requires a persistent connection.
 
@@ -63,20 +67,20 @@ pool_mode = session
 
 No special configuration needed on the Soniq side.
 
-### Transaction mode -- breaks LISTEN/NOTIFY
+### Transaction mode breaks LISTEN/NOTIFY
 
 In transaction mode, PgBouncer returns the server connection to the pool after each transaction. `LISTEN` subscriptions are lost between transactions, and `NOTIFY` messages won't reach the intended listener.
 
-**Soniq will not receive instant job notifications in transaction mode.** It falls back to polling, which adds latency (up to `SONIQ_POLL_INTERVAL` seconds, default 5).
+**In transaction mode, Soniq does not receive instant job notifications.** It falls back to polling, which adds latency (up to `SONIQ_POLL_INTERVAL` seconds, default 5).
 
 If you must use transaction mode:
 
-- Accept the added latency from polling.
-- Or run Soniq's connection directly to PostgreSQL (bypassing PgBouncer) while routing your application traffic through PgBouncer. This is the recommended approach.
+- Accept the added latency from polling. The scheduler also needs session pooling, because its leader lock is a session-scoped advisory lock.
+- Or connect Soniq directly to PostgreSQL, bypassing PgBouncer, and route your application traffic through PgBouncer. This is the recommended approach.
 
 ### Connection count math with PgBouncer
 
-With the default concurrency of 4, budget about 7 connections per worker. If you run 3 workers at concurrency 4, you need roughly 21 connections.
+With the default concurrency of 4, budget 6 connections per worker. If you run 3 workers at concurrency 4, you need 18 connections.
 
 Set PgBouncer's `max_client_conn` to accommodate your total Soniq connections plus your application's connections. Keep `default_pool_size` >= your total Soniq connection count.
 
@@ -106,12 +110,9 @@ work_mem = 4MB                  # Per-operation memory
 max_connections = 200           # Account for all workers + app + admin
 ```
 
-Soniq creates its own indexes during `soniq setup`. If you need additional indexes for custom queries:
+`soniq setup` creates the indexes that the worker queries need, including indexes on `(queue, status, priority)`, `scheduled_at` and `worker_id`. Do not add duplicates of them. Add your own index only for your own queries on `soniq_jobs`, and create it with `CREATE INDEX CONCURRENTLY` so it does not block the queue.
 
-```sql
-CREATE INDEX CONCURRENTLY idx_soniq_jobs_status_queue
-  ON soniq_jobs(status, queue);
+## Next steps
 
-CREATE INDEX CONCURRENTLY idx_soniq_jobs_scheduled_at
-  ON soniq_jobs(scheduled_at) WHERE scheduled_at IS NOT NULL;
-```
+- [Going to production](going-to-production.md) - the full checklist
+- [Reliability](reliability.md) - what happens when the database or a worker fails

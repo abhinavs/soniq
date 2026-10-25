@@ -86,9 +86,9 @@ async def drain(soniq: Any, max_jobs: Optional[int] = None) -> list[Any]:
     results: list[Any] = []
     original = backend.mark_job_done
 
-    async def record(job_id: str, **kwargs: Any) -> None:
+    async def record(job_id: str, **kwargs: Any) -> Any:
         results.append(kwargs.get("result"))
-        await original(job_id, **kwargs)
+        return await original(job_id, **kwargs)
 
     backend.mark_job_done = record
     try:

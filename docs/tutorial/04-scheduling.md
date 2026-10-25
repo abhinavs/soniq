@@ -1,14 +1,16 @@
-# 4. Scheduling
+---
+description: Schedule Python background jobs in Soniq. Run a job later with soniq.schedule, or on a cron or interval with @soniq.periodic and the soniq scheduler process.
+---
+
+# 4. Schedule delayed and recurring jobs
 
 > **Intermediate** - 8 minutes. Delayed jobs and recurring schedules.
 
-Soniq supports one-off delayed jobs and recurring schedules. The
-recurring scheduler ships in the default install (`croniter` is a
-default dependency as of 0.0.2) - no extra needed.
+Soniq can run a job once at a later time, or repeatedly on a cron or interval schedule. The recurring scheduler is part of the default install (`croniter` is a core dependency), so you need no extra.
 
 ## One-off scheduling
 
-Schedule a job to run at a specific time or after a delay.
+Run a job at a set time or after a delay.
 
 **Absolute time:**
 
@@ -17,7 +19,7 @@ from datetime import datetime, timezone
 
 await soniq.schedule(
     send_welcome_email,
-    run_at=datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc),
+    run_at=datetime(2030, 1, 15, 9, 0, tzinfo=timezone.utc),
     user_id=42,
 )
 ```
@@ -31,13 +33,13 @@ await soniq.schedule(send_report, run_at=timedelta(minutes=30), report_id="q4")
 await soniq.schedule(send_report, run_at=600, report_id="q4")  # 600 seconds from now
 ```
 
-`run_at` accepts a UTC `datetime`, a `timedelta`, or a number of seconds from now. Under the hood, `schedule()` calls `enqueue()` with a `scheduled_at` timestamp. The worker ignores scheduled jobs until their time arrives.
+`run_at` accepts a timezone-aware `datetime`, a `timedelta`, or a number of seconds from now. Soniq rejects a naive `datetime` (one without `tzinfo`). `schedule()` calls `enqueue()` with a `scheduled_at` value. The worker does not claim a scheduled job before its time.
 
 ## Recurring jobs
 
 ### `@soniq.periodic()` decorator
 
-The single decorator that registers a job and its schedule together. The scheduler process picks up all `@periodic` functions automatically.
+This decorator registers a job and its schedule together. The scheduler process finds every `@soniq.periodic()` function automatically.
 
 ```python
 from datetime import timedelta
@@ -59,13 +61,13 @@ async def flush_metrics():
     ...
 ```
 
-`@soniq.periodic` accepts the same kwargs as `@soniq.job` (`name`, `queue`, `priority`, `retries`, `validate`, etc.) - it is `@soniq.job` plus the periodic stamp. `name` is optional and falls back to `f"{module}.{qualname}"`.
+`@soniq.periodic()` accepts the same keyword arguments as `@soniq.job()` (`name`, `queue`, `priority`, `retries`, `validate`, and so on). Pass exactly one of `cron=` or `every=`. Always set `name=`. Without it, Soniq derives a name from the module path and prints a deprecation warning.
 
 ### Cron-string builders
 
-`soniq.schedules` exposes a small DSL that returns plain cron strings - a readability layer over the 5-field grammar. Each terminal returns a `str`, so `cron=daily().at("09:00")` works without `.expr`.
+The `soniq.schedules` module has small builders that return plain cron strings. They make the 5-field cron grammar easier to read. Each builder ends in a method that returns a `str`, so `cron=daily().at("09:00")` works as it is.
 
-One big example, every builder in one place:
+This example shows every builder:
 
 ```python
 from datetime import timedelta
@@ -129,7 +131,7 @@ async def weekday_morning_digest():
 
 ### Imperative API for dynamic schedules
 
-When a schedule is computed at runtime (per-tenant, per-feature-flag, ...), use `soniq.scheduler.add(...)`:
+When your code computes a schedule at runtime (for example per tenant), use `soniq.scheduler.add(...)`:
 
 ```python
 await soniq.scheduler.add(
@@ -148,19 +150,19 @@ schedules = await soniq.scheduler.list(status="active")
 sched = await soniq.scheduler.get("reports.daily")
 ```
 
-Schedules are keyed by the resolved task name. Calling `add()` again with the same name updates the schedule in place rather than creating a duplicate.
+Soniq identifies a schedule by its task name. If you call `add()` again with the same name, Soniq updates the schedule and does not create a duplicate.
 
 ## Scheduler process
 
-Recurring jobs need a running scheduler to check for due jobs and enqueue them. Start it separately from your worker:
+Recurring jobs need a running scheduler. The scheduler finds due jobs and enqueues them. Start it in a separate process from your worker:
 
 ```bash
 soniq scheduler --check-interval 60
 ```
 
-The scheduler checks for due recurring jobs every `--check-interval` seconds (default: 60). If an `every=` schedule is shorter than that, the scheduler checks at that shorter interval instead. When a job is due, it enqueues a new instance into the regular job queue. Workers then pick it up as usual.
+The scheduler checks for due jobs every `--check-interval` seconds (default: 60). If an `every=` schedule is shorter than that, the scheduler uses the shorter interval. For each due job, the scheduler enqueues a new job in the regular queue. Workers claim it as usual.
 
-Multiple scheduler instances are safe. Soniq elects a single tick leader via a Postgres advisory lock per interval, and the per-job claim runs as an atomic compare-and-swap on `next_run` inside a single transaction with the enqueue: if anyone wins the race, exactly one job lands in the queue.
+You can run more than one scheduler. The schedulers elect one leader for each tick with a PostgreSQL advisory lock. The claim for each job is an atomic compare-and-swap on `next_run`, in the same transaction as the enqueue. Only one scheduler wins, so exactly one job enters the queue.
 
 ### Inspecting registered schedules
 
@@ -169,10 +171,7 @@ soniq inspect              # worker list + schedule counts
 soniq inspect --schedules  # plus each schedule by name with next-run time
 ```
 
-Scheduler liveness is leader-elected per tick rather than tracked as a
-persistent process record, so `inspect` reports what is registered, not which
-process is currently the leader. To check a scheduler process is alive, look
-at your process supervisor.
+Soniq elects the scheduler leader for each tick. It does not keep a process record for the scheduler. `soniq inspect` therefore shows what is registered, not which process is the leader. To check that a scheduler process is alive, use your process supervisor.
 
 ### Programmatic start
 
@@ -184,4 +183,8 @@ await soniq.scheduler.stop()
 
 ## Persistence
 
-Recurring job schedules are stored in the `soniq_recurring_jobs` table on Postgres. If the scheduler restarts, it reloads all active schedules and resumes where it left off. No schedules are lost. The Memory and SQLite backends keep schedules in-process (single-writer, useful for tests and local dev).
+On PostgreSQL, Soniq stores recurring schedules in the `soniq_recurring_jobs` table. When the scheduler restarts, it reloads all active schedules and continues. The memory and SQLite backends keep schedules in the process. Use them for tests and local development.
+
+## Next steps
+
+Continue with [chapter 5: queues](05-queues.md).

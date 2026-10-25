@@ -1,6 +1,10 @@
-# Stability and versioning
+---
+description: Soniq versioning policy - what 0.x means, how breaking changes and schema migrations are handled, and the supported Python and PostgreSQL versions.
+---
 
-Soniq follows semantic versioning with the usual 0.x caveat.
+# Soniq stability, versioning and supported versions
+
+Soniq follows semantic versioning with the usual 0.x caveat. It supports Python 3.10 and newer and PostgreSQL 15 and newer.
 
 ## What 0.x means
 
@@ -27,10 +31,10 @@ What goes into the rows is specified separately, in [Storage format](reference/s
 | Component  | Supported                                      |
 | ---------- | ---------------------------------------------- |
 | Python     | 3.10 and newer (CI runs 3.10 to 3.14)          |
-| PostgreSQL | CI runs the integration tests on PostgreSQL 16 |
+| PostgreSQL | 15 and newer (CI runs 15 and 18)               |
 
-Soniq's package metadata declares `requires-python >= 3.10`. Other PostgreSQL versions may work, but only 16 is tested.
+Soniq's package metadata declares `requires-python >= 3.10`. PostgreSQL 14 and older are not supported: `soniq setup` warns on them, and a later release may stop working there.
 
 ## How long old versions get fixes
 
-Fixes go to the latest minor version only. If you hit a bug on an older minor, upgrade to the latest patch of the newest minor. Because upgrades within 0.x are meant to be small, this should be a short step.
+Fixes go to the latest minor version only. If you hit a bug on an older minor, upgrade to the latest patch of the newest minor. Upgrades within 0.x are meant to be small, so this is a short step.

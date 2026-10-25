@@ -289,7 +289,7 @@ If a user's request mentions one of these, push back rather than fabricating an 
 - **`task.signature(...)` / `.s(...)` partials.** Build the kwargs dict yourself.
 - **Worker remote control / broadcast.** Send `SIGTERM`.
 - **Config-driven `task_routes`.** There is only a consumer-side `route_map` setting (name prefix to queue). Otherwise the queue is on the decorator (`@soniq.job(queue=...)`) or the enqueue call.
-- **Burst-mode workers** (RQ's `--burst`). Workers are long-lived. `soniq worker --run-once` drains the ready jobs and exits, which suits tests and cron-driven runs. For batch processing, enqueue from a script and let normal workers process.
+- **RQ's `--burst` flag.** Use `soniq worker --run-once` instead. It drains the ready jobs and exits, which suits tests and cron-driven runs. Normal workers are long-lived.
 - **Exactly-once delivery.** Postgres alone cannot guarantee it. Make handlers idempotent.
 
 ## When you don't know

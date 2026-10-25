@@ -1,7 +1,10 @@
-# Jobs
+---
+description: Define, enqueue and schedule Python background jobs with Soniq on PostgreSQL. Covers @soniq.job(), enqueue(), schedule(), @soniq.periodic() and Snooze.
+---
 
-Everything about defining, enqueueing, scheduling, and inspecting jobs.
+# Define, enqueue and schedule jobs
 
+A job in Soniq is an async Python function that you register with `@soniq.job()`. Soniq stores each call to `enqueue()` as a row in PostgreSQL, and a worker runs the function later. This page covers defining, enqueueing, scheduling and inspecting jobs.
 
 ## @soniq.job decorator
 
@@ -25,17 +28,17 @@ All parameters are optional.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. When omitted, it is derived from `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
-| `retries` | `int` | `3` | Maximum retry attempts on failure. Alias: `max_retries`. |
-| `priority` | `int` | `100` | Lower number = higher priority. |
+| `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. The name must match the `task_name_pattern` setting, which by default means lowercase dotted segments such as `emails.send_email`. When omitted, Soniq derives the name from `f"{module}.{function_name}"`. This is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
+| `retries` | `int` | `3` | Maximum retries after the first failure. A job runs at most `retries + 1` times. Alias: `max_retries`. |
+| `priority` | `int` | `100` | A lower number runs first. |
 | `queue` | `str` | `"default"` | Queue name for this job. |
-| `unique` | `bool` | `False` | Deduplicate by arguments hash. If a matching job is already queued, the enqueue is skipped. |
+| `unique` | `bool` | `False` | Deduplicate by job name and argument hash. If a matching job is still `queued`, `enqueue()` creates no job and returns the id of the existing one. |
 | `retry_delay` | `int \| float \| list[int \| float]` | `0` | Seconds to wait before each retry. Pass a list to set per-attempt delays (e.g. `[1, 5, 30]`). |
-| `retry_backoff` | `bool` | `False` | Apply exponential backoff to `retry_delay`. |
+| `retry_backoff` | `bool` | `False` | Double the delay on each attempt. The base is `retry_delay`, or 1 second when `retry_delay` is `0`. |
 | `retry_max_delay` | `int \| float \| None` | `None` | Cap on retry delay in seconds. |
-| `retry_jitter` | `bool` | `True` | With `retry_backoff`, apply full jitter to the backoff delay. |
-| `timeout` | `int \| float \| None` | `None` | Per-job timeout in seconds. `None` uses the global `job_timeout` setting (default 300s). |
-| `validate` | `type[BaseModel] \| None` | `None` | Pydantic model for argument validation at enqueue time. Alias: `args_model`. |
+| `retry_jitter` | `bool` | `True` | With `retry_backoff`, pick a random delay between half of the backoff delay and the full delay. Ignored without `retry_backoff`. |
+| `timeout` | `int \| float \| None` | `None` | Per-job timeout in seconds. `None` uses the `job_timeout` setting (default 300 seconds). A timeout counts as a failure and follows the retry rules. |
+| `validate` | `type[BaseModel] \| None` | `None` | Pydantic model that checks the job arguments at enqueue time. Alias: `args_model`. |
 
 ```python
 @soniq.job(
@@ -56,7 +59,7 @@ async def process_payment(order_id: int, amount: float):
 Dispatches a registered job for processing. Three input shapes:
 
 ```python
-# 1. Callable (single-repo)
+# 1. Callable (same codebase)
 job_id = await soniq.enqueue(send_email, to="a@b.com", subject="Hi", body="Hello")
 
 # 2. String task name (cross-service / by-name)
@@ -73,17 +76,18 @@ job_id = await soniq.enqueue(send_email_ref, args={"to": "a@b.com", "subject": "
 
 ```python
 async def enqueue(
-    target,             # Callable, string task name, or TaskRef
+    target,             # Callable, string task name, or TaskRef (positional only)
+    /,
     *,
     args: dict | None = None,  # Function args (string / TaskRef shapes)
-    priority: int = None,      # Override the job's default priority
-    queue: str = None,         # Override the job's default queue
-    scheduled_at: datetime | timedelta | int | float = None,  # Run at a time (UTC), or after a delay
-    unique: bool = None,       # Override the job's default uniqueness
-    dedup_key: str = None,     # Custom deduplication key (instead of args hash)
-    connection = None,         # Asyncpg connection for transactional enqueue
-    **func_kwargs,             # Function args (callable shape)
-) -> str                       # Returns job UUID
+    priority: int | None = None,     # Override the job's default priority
+    queue: str | None = None,        # Override the job's default queue
+    scheduled_at: datetime | timedelta | int | float | None = None,  # Run at a time, or after a delay
+    unique: bool | None = None,      # Override the job's default uniqueness
+    dedup_key: str | None = None,    # Custom deduplication key (instead of args hash)
+    connection = None,               # Connection for transactional enqueue
+    **func_kwargs,                   # Function args (callable shape)
+) -> str                             # Returns the job UUID
 ```
 
 `target` is the first positional argument and selects the input shape:
@@ -92,12 +96,16 @@ async def enqueue(
 - **String task name**: function args travel in `args=dict`. Don't pass `**func_kwargs` (they would collide with enqueue options).
 - **`TaskRef`**: function args travel in `args=dict` and are validated against `ref.args_model` if set.
 
-All option parameters are optional. When omitted, the values from the `@soniq.job` registration apply (or system defaults if no local registration).
+All option parameters are optional. When you omit one, the value from the `@soniq.job()` registration applies. A job with no local registration gets priority 100, queue `default` and `max_retries + 1` attempts (from the `max_retries` setting).
+
+`scheduled_at` accepts a timezone-aware `datetime`, a `timedelta`, or a number of seconds from now. A naive `datetime` raises `ValueError`.
+
+`enqueue()` rejects bad arguments before it writes a row. It raises `SoniqError` with code `SONIQ_TASK_ARGS_INVALID` when an argument is not JSON-serializable, does not fit the handler signature, or fails the `validate=` model. It raises `SONIQ_UNKNOWN_TASK_NAME` when you enqueue an unregistered string name and `enqueue_validation` is `"strict"` (the default).
 
 ### Transactional enqueue
 
 Pass a `connection` to enqueue a job inside an existing database transaction.
-If the transaction rolls back, the job is never created.
+If the transaction rolls back, the job is never created. The connection must have an active transaction. Soniq accepts an `asyncpg` connection, a SQLAlchemy `AsyncSession` or `AsyncConnection`, and a `psycopg` `AsyncConnection`.
 
 ```python
 await soniq.ensure_initialized()
@@ -107,7 +115,7 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(fulfill_order, connection=conn, order_id=order_id)
 ```
 
-Transactional enqueue requires the PostgreSQL backend.
+Transactional enqueue requires the PostgreSQL backend. See [Transactional enqueue](../guides/transactional-enqueue.md) for the other connection types.
 
 
 ## job.enqueue() and job.options()
@@ -195,14 +203,14 @@ async def enqueue_many(
 ) -> list[str]
 ```
 
-On Postgres this issues one batched INSERT round-trip; on SQLite/Memory it loops over `create_job`. Each `args_list[i]` is validated against the registered `args_model` (if any) before any row is written.
+On PostgreSQL, `enqueue_many()` writes all rows with one batched INSERT. On SQLite and the in-memory backend, it inserts the rows one by one. Soniq checks every `args_list[i]` before it writes any row, so one bad item fails the whole call.
 
-`enqueue_many()` does not support `unique=True` or `dedup_key=`. If the registered job declares `unique=True`, or you need per-row dedup, call `enqueue()` in a loop instead.
+`enqueue_many()` has no `unique=` or `dedup_key=` option. If the registered job declares `unique=True`, `enqueue_many()` raises `TypeError`. For per-row deduplication, call `enqueue()` in a loop. An empty `args_list` returns `[]`.
 
 
 ## schedule()
 
-Schedule a job for future execution.
+Schedule a job to run at a later time. `schedule()` is `enqueue()` with `scheduled_at=run_at`.
 
 ```python
 from datetime import datetime, timezone
@@ -218,14 +226,14 @@ await soniq.schedule(
 ```python
 async def schedule(
     target,
-    run_at,            # UTC datetime, timedelta, or seconds-from-now (int/float)
+    run_at,            # Timezone-aware datetime, timedelta, or seconds from now (int/float)
     *,
     args: dict | None = None,
     **kwargs,
 ) -> str  # Returns job UUID
 ```
 
-`soniq.schedule()` is a thin wrapper around `soniq.enqueue()` that sets `scheduled_at=run_at`.
+`soniq.schedule()` passes `**kwargs` to `enqueue()`, so `kwargs` are job arguments for the callable shape. A naive `datetime` raises `ValueError`. For a recurring schedule, use `@soniq.periodic()`.
 
 
 ## @soniq.periodic()
@@ -257,15 +265,31 @@ The scheduler checks for due jobs every `--check-interval` seconds (default 60).
 
 | Parameter | Type | Description |
 |---|---|---|
-| `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). |
-| `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; ints are treated as seconds. |
-| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). Always pass `name`: without it the name falls back to `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. |
+| `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). Soniq validates the expression when the decorator runs. |
+| `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; numbers are seconds. The minimum is 1 second. |
+| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). Always pass `name`: without it the name falls back to `f"{module}.{function_name}"`, which is deprecated since 0.2.0 and warns. |
 
 Rules:
 - Specify exactly one of `cron=` or `every=`.
 - They cannot be combined.
 
 Requires a running `soniq scheduler` process to actually fire the jobs.
+
+
+## Snooze
+
+A handler returns `Snooze` to run again later without using a retry. Use it when the job must wait for something outside Soniq, such as a rate limit.
+
+```python
+from soniq import Snooze
+
+@soniq.job(name="sync.pull_orders")
+async def pull_orders():
+    if rate_limited():
+        return Snooze(seconds=60, reason="rate limited")
+```
+
+`Snooze(seconds, reason=None)` puts the job back in `queued` with a new run time. The attempt count does not go up. The `snooze_max_seconds` setting caps the delay (default 86400 seconds). Soniq fires no `after_job` or `on_error` hook for a snoozed run.
 
 
 ## JobContext
@@ -329,6 +353,7 @@ await soniq.scheduler.add(
     args={"region": "US"},
     queue="reports",
     priority=10,
+    max_attempts=3,
 )
 
 await soniq.scheduler.pause("reports.daily")
@@ -337,6 +362,8 @@ await soniq.scheduler.remove("reports.daily")
 schedules = await soniq.scheduler.list(status="active")
 sched = await soniq.scheduler.get("reports.daily")
 ```
+
+`add()` takes `target`, `cron`, `every`, `args`, `queue`, `priority`, `max_attempts` and `name`. Pass exactly one of `cron` or `every`. It returns the schedule name.
 
 Schedules are keyed by the resolved task name. Re-adding the same name
 updates the schedule in place rather than creating a duplicate.
@@ -353,6 +380,7 @@ from soniq import cron, daily, every, monthly, weekly
 every(5).minutes()                 # "*/5 * * * *"
 every(2).hours()                   # "0 */2 * * *"
 every(30).seconds()                # timedelta(seconds=30)
+every(2).days()                    # "0 0 */2 * *"
 daily().at("09:00")                # "0 9 * * *"
 weekly().on("monday").at("09:00")  # "0 9 * * 1"
 monthly().on_day(15).at("12:00")   # "0 12 15 * *"

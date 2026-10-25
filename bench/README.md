@@ -8,7 +8,7 @@ Start a Postgres 16 container and install Soniq:
 
 ```bash
 docker run --rm -d --name soniq-bench -p 5432:5432 \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=soniq_bench postgres:16
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=soniq_bench postgres:18
 pip install -e .
 ```
 

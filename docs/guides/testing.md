@@ -1,23 +1,27 @@
-# Testing
+---
+description: Test Soniq background jobs with pytest - the memory backend, soniq_memory and soniq_pg fixtures, drain, wait_until, retries and dead-letter jobs.
+---
 
-Practical patterns for testing applications that use Soniq. All examples use pytest.
+# Test Python background jobs with pytest and Soniq
+
+Soniq ships a memory backend, pytest fixtures and helpers so you can test background jobs without a running PostgreSQL server. This page shows unit tests, round-trip tests, retry tests and integration tests. All examples use pytest.
 
 ## The `soniq.testing` package
 
-Everything in `soniq.testing` is for tests, examples, and quick scripts. It is intentionally separate from production-tier imports so its scope is obvious at the import site:
+Use `soniq.testing` in tests, examples and quick scripts only. It is separate from the production imports so its scope is clear at the import site:
 
 ```python
 from soniq.testing import MemoryBackend, make_app, wait_until
 ```
 
-- `MemoryBackend`: in-memory `StorageBackend`. No persistence, no concurrency contention. Good for unit tests; never use it in production.
+- `MemoryBackend`: in-memory `StorageBackend`. No persistence, no concurrency contention. Use it for unit tests. Do not use it in production.
 - `make_app(**overrides)`: one-liner Soniq wired against `MemoryBackend`. Equivalent to `Soniq(backend="memory", **overrides)`.
 - `drain(soniq, max_jobs=None)`: run queued jobs until none are ready, in the test's own event loop. Returns the list of job results.
-- `wait_until(predicate, *, timeout=2.0, poll=0.01, message=None)`: deadline-based polling that replaces fixed `asyncio.sleep(...)` calls in async tests. Predicate may be sync or async. Raises `AssertionError` on timeout.
+- `wait_until(predicate, *, timeout=2.0, poll=0.01, message=None)`: deadline-based polling that replaces fixed `asyncio.sleep(...)` calls in async tests. The predicate can be sync or async. Raises `AssertionError` on timeout.
 
 ## Pytest plugin
 
-Soniq ships an opt-in pytest plugin. Soniq does not load it for you. Add this line to your `conftest.py`:
+Soniq ships an opt-in pytest plugin. Soniq does not load it for you. Add this line to `conftest.py`:
 
 ```python
 pytest_plugins = ["soniq.testing.pytest_plugin"]
@@ -25,7 +29,7 @@ pytest_plugins = ["soniq.testing.pytest_plugin"]
 
 You can also run `pytest -p soniq.testing.pytest_plugin`.
 
-Also turn on `asyncio_mode = "auto"` so your async tests run without a marker on each one:
+Turn on `asyncio_mode = "auto"` so async tests run without a marker on each test:
 
 ```toml
 # pyproject.toml
@@ -36,7 +40,7 @@ asyncio_mode = "auto"
 The plugin gives you two fixtures:
 
 - `soniq_memory`: a `Soniq` on the in-memory backend.
-- `soniq_pg`: a `Soniq` on PostgreSQL. It reads `SONIQ_DATABASE_URL` and skips the test if the variable is not set. The test runs in one transaction. The plugin rolls it back at the end, so the test leaves no rows behind. It creates the Soniq tables first if they do not exist.
+- `soniq_pg`: a `Soniq` on PostgreSQL. It reads `SONIQ_DATABASE_URL` and skips the test if the variable is not set. The test runs in one transaction. The plugin rolls the transaction back at the end, so the test leaves no rows behind. The plugin creates the Soniq tables first if they do not exist.
 
     Point `SONIQ_DATABASE_URL` at a dedicated, empty test database. Draining in a `soniq_pg` test runs every queued job in that database, including leftover jobs from other runs, with their real side effects.
 
@@ -57,11 +61,11 @@ async def test_welcome_email(soniq_memory):
 
 The marker also points your instance's `enqueue` and `enqueue_many` at the fixture for the length of the test. So `send_email.enqueue(...)`, and app code that calls `soniq.enqueue(...)` on your module-level instance, put jobs in the fixture's queue and not in your real database.
 
-The async tests need `pytest-asyncio`. Either set `asyncio_mode = "auto"` in your pytest config or mark each test with `@pytest.mark.asyncio`. Without one of them, pytest fails each async test with "async def functions are not natively supported" (pytest-asyncio's default `strict` mode only runs tests that are marked).
+Async tests need `pytest-asyncio`. Set `asyncio_mode = "auto"` in your pytest config, or mark each test with `@pytest.mark.asyncio`. Without one of them, pytest fails each async test with "async def functions are not natively supported", because the default `strict` mode runs only marked tests.
 
 ## Memory backend for unit tests
 
-The fastest way to test. No external services, no cleanup scripts. State lives in Python dicts and disappears when the process exits:
+The memory backend is the fastest way to test. It needs no external service and no cleanup script. State lives in Python dicts and disappears when the process exits:
 
 ```python
 from soniq.testing import make_app
@@ -73,7 +77,7 @@ soniq = make_app()
 
 ## Pytest fixture
 
-A reusable fixture that gives each test a clean, isolated Soniq instance:
+This fixture gives each test a clean Soniq instance:
 
 ```python
 import pytest
@@ -89,7 +93,7 @@ async def soniq():
 
 ## Async waits without fixed sleeps
 
-`asyncio.sleep(0.5)` in a test is a guess: too short on slow CI, too long on fast hardware. Use `wait_until` to poll an observable condition with a deadline:
+A fixed `asyncio.sleep(0.5)` in a test is a guess. It is too short on slow CI and too long on fast hardware. Use `wait_until` to poll a condition with a deadline:
 
 ```python
 import asyncio
@@ -116,7 +120,6 @@ async def test_worker_completes_job(soniq):
     )
 ```
 
-Every test that accepts `soniq` gets its own queue with no leftover state from previous runs.
 
 ## Testing job logic directly
 
@@ -127,16 +130,16 @@ Job functions are regular async functions. Call them without enqueuing:
 async def send_welcome(to: str):
     return f"sent to {to}"
 
-# Call directly -- no queue involved
+# Call the function directly. No queue is involved.
 result = await send_welcome("alice@example.com")
 assert result == "sent to alice@example.com"
 ```
 
-This is the fastest way to test business logic. Save round-trip tests for integration coverage.
+Direct calls are the fastest way to test business logic. Use round-trip tests for integration coverage.
 
 ## Enqueue + process round-trips
 
-Use `run_worker(run_once=True)` to drain the queue synchronously in your test:
+Call `run_worker(run_once=True)` to run the queued jobs inside your test:
 
 ```python
 async def test_round_trip(soniq):
@@ -152,7 +155,7 @@ async def test_round_trip(soniq):
     assert results == ["hello"]
 ```
 
-`run_once=True` processes all available jobs and returns immediately. No polling loop, no timeouts, no flaky sleeps.
+`run_once=True` runs all ready jobs and then returns. It needs no polling loop and no sleep.
 
 ## Checking job status
 
@@ -169,7 +172,7 @@ async def test_job_status(soniq):
 
 ## Testing retries
 
-Enqueue a job that raises, then call `run_worker(run_once=True)` multiple times:
+Enqueue a job that raises. Then call `run_worker(run_once=True)` once for each attempt. With `retries=2`, a job has 3 attempts:
 
 ```python
 async def test_retry_behavior(soniq):
@@ -191,9 +194,7 @@ async def test_retry_behavior(soniq):
 
 ## Testing failed jobs
 
-Jobs that exhaust retries land in the dead-letter table, not in
-`soniq_jobs`. Inspect them through `soniq.dead_letter`. The dead-letter table
-lives in PostgreSQL, so use the `soniq_pg` fixture:
+A job that uses all its retries moves to the dead-letter table, not `soniq_jobs`. Read it through `soniq.dead_letter`. The dead-letter table is in PostgreSQL, so use the `soniq_pg` fixture:
 
 ```python
 async def test_failure_tracking(soniq_pg):
@@ -210,7 +211,7 @@ async def test_failure_tracking(soniq_pg):
 
 ## Resetting state between tests
 
-If you share a single instance across tests (for example, a session-scoped fixture), call `_reset()` to wipe all jobs and workers:
+If tests share one instance, for example in a session-scoped fixture, call `_reset()` to delete all jobs and workers:
 
 ```python
 @pytest.fixture(autouse=True)
@@ -219,19 +220,17 @@ async def clean_slate(soniq):
     await soniq._reset()
 ```
 
-`_reset()` truncates job and worker tables (or clears the in-memory dicts) without tearing down the connection.
+`_reset()` deletes the job and worker rows, or clears the in-memory dicts. It keeps the connection open.
 
 ## SQLite for integration tests
 
-When you need to test against a real SQL database but don't want to run PostgreSQL in CI:
+Use SQLite when you need a real SQL database in a test but do not want to run PostgreSQL in CI:
 
 ```bash
 pip install "soniq[sqlite]"
 ```
 
-The base `pip install soniq` does not pull in the SQLite driver. Without the
-extra, `Soniq(backend="sqlite", ...)` raises an `ImportError` naming
-`soniq[sqlite]`.
+The base `pip install soniq` does not install the SQLite driver. Without the extra, `Soniq(backend="sqlite", ...)` raises an `ImportError` that names `soniq[sqlite]`.
 
 ```python
 import pytest
@@ -251,11 +250,16 @@ Pass a **bare file path** (`"test.db"`, `str(tmp_path / "test.db")`), not a
 the form the rest of the docs use. The same goes for the memory backend:
 `Soniq(backend="memory")`, no URL.
 
-SQLite gives you real SQL semantics (constraints, transactions) without external dependencies. Use `tmp_path` so each test gets a fresh database file that's automatically cleaned up.
+SQLite gives you real SQL behaviour (constraints, transactions) with no external service. Use `tmp_path` so each test gets a fresh database file that pytest removes later.
 
 ## Tips
 
 - Keep unit tests on the Memory backend. Reserve PostgreSQL tests for CI or a dedicated integration suite.
-- Use `run_once=True` liberally. It's deterministic and fast.
+- Use `run_once=True`. It is deterministic and fast.
 - `JobContext` is injected automatically. Add a `ctx: JobContext` parameter to your job function to inspect context during tests.
-- For hooks testing, register `@soniq.before_job` / `@soniq.after_job` / `@soniq.on_error` and assert they were called with the expected context.
+- To test hooks, register `@soniq.before_job`, `@soniq.after_job` or `@soniq.on_error` and assert on the positional arguments they receive. See [Common patterns](common-patterns.md#job-hooks-run-code-before-after-and-on-error).
+
+## Next steps
+
+- [Common patterns](common-patterns.md) - hooks, deduplication and job results
+- [FastAPI integration](fastapi.md) - test routes that enqueue jobs

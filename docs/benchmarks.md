@@ -1,6 +1,10 @@
-# Benchmarks
+---
+description: Soniq throughput and latency benchmarks on PostgreSQL 16 - jobs per second, enqueue rate, p50, p95 and p99 latency, with method and script.
+---
 
-These numbers show how Soniq behaves on one developer laptop. They are not from a tuned server. Do not use them as a capacity plan. Run the script on your own hardware to get numbers that matter for you.
+# Soniq benchmarks: jobs per second and latency on PostgreSQL
+
+These numbers show how Soniq, a Python job library on PostgreSQL, behaves on one developer laptop. At 10000 jobs, 2 workers and concurrency 8, it processed 1136 jobs per second. They are not from a tuned server. Do not use them as a capacity plan. Run the script on your own hardware to get numbers that matter for you.
 
 ## What the test does
 

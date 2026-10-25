@@ -30,8 +30,8 @@ import importlib
 import importlib.util
 import logging
 import os
+import re
 from typing import Any, Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import dotenv_values
 from pydantic import ValidationError
@@ -47,32 +47,30 @@ from soniq.discovery import (
 logger = logging.getLogger(__name__)
 
 
+_QUERY_SECRET = re.compile(r"(?i)([?&](?:ssl)?password=)[^&#]*")
+
+
 def redact_url(url: str) -> str:
     """Return ``url`` with any password replaced by ``***``, for printing.
 
-    Covers ``user:secret@host`` and a ``?password=`` query parameter, the two
-    places asyncpg reads a password from.
+    Works on the raw string, not a parsed URL: a password may hold ``/ # ? [``
+    or ``@``, which no URL parser splits the way libpq does. Covers
+    ``user:secret@host`` and ``password=`` / ``sslpassword=`` query parameters.
     """
     try:
-        parts = urlsplit(url)
-        has_password = parts.password is not None
-    except ValueError:
-        return url
-    query = parse_qsl(parts.query, keep_blank_values=True)
-    has_query_password = any(k == "password" for k, _ in query)
-    if not (has_password or has_query_password):
-        # urlunsplit would turn sqlite:///x.db into sqlite:/x.db.
-        return url
-    if has_password:
-        userinfo, _, hostinfo = parts.netloc.rpartition("@")
-        parts = parts._replace(netloc=f"{userinfo.partition(':')[0]}:***@{hostinfo}")
-    if has_query_password:
-        parts = parts._replace(
-            query=urlencode(
-                [(k, "***" if k == "password" else v) for k, v in query], safe="*"
-            )
-        )
-    return urlunsplit(parts)
+        scheme, sep, rest = url.partition("://")
+        if sep:
+            # Mask up to the last "@" in the string, so a "/", "?" or "@"
+            # inside the password is still covered. An "@" in the query
+            # over-masks the host, which is the safe way to be wrong.
+            at = rest.rfind("@")
+            userinfo = rest[:at] if at != -1 else ""
+            if ":" in userinfo:
+                user = userinfo.split(":", 1)[0]
+                rest = f"{user}:***{rest[at:]}"
+        return _QUERY_SECRET.sub(r"\1***", scheme + sep + rest)
+    except Exception:
+        return "<unparseable url>"
 
 
 def database_url_argument(parser) -> None:

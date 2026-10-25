@@ -1,32 +1,30 @@
-# Deployment shapes
+---
+description: Run Soniq as a producer service, a consumer service, or both. Share a TaskRef stub package so Python services enqueue and run jobs by canonical name.
+---
 
-Soniq is one class for both producers and consumers. Producer-vs-consumer
-is a deployment convention, not a class hierarchy or a constructor flag.
-The same `Soniq` runs in both roles; what differs is what the deployment
-imports and what it executes.
+# Producer and consumer deployment shapes
+
+Soniq uses one class, `Soniq`, for both producers and consumers. The producer-or-consumer split is a deployment convention, not a class hierarchy or a constructor flag. The same `Soniq` runs in both roles. What differs is what the deployment imports and what it executes.
 
 ## Producer service
 
-A producer service connects to the queue, enqueues jobs by name, and
-never starts a worker. It does not need to import the handler modules:
-the canonical task name is the contract.
+A producer service connects to the queue, enqueues jobs by name, and never starts a worker. It does not need to import the handler modules. The canonical job name is the contract.
 
 ```python
 from soniq import Soniq
 
-soniq = Soniq(database_url="postgresql://...")
+soniq = Soniq(database_url="postgresql://...", enqueue_validation="none")
 
 await soniq.enqueue("billing.send", args={"order_id": 7})
 ```
 
-If a producer accidentally calls `run_worker(...)`, it polls the queue
-with zero registered handlers and dead-letters jobs by `Job not
-registered`. That's a fast, actionable failure - the misconfiguration
-shows up in the worker's first poll, not at 3am.
+The default `enqueue_validation="strict"` raises `SONIQ_UNKNOWN_TASK_NAME` for a name that is not registered in the producer process. A pure producer sets `"none"` (or `"warn"`), or enqueues a `TaskRef` as shown below.
+
+If a producer calls `run_worker(...)` by mistake, it polls the queue with no registered handlers. It moves each job it claims to the dead-letter queue with the reason `job_not_found`. The misconfiguration shows up on the first poll.
 
 ## Consumer service
 
-A consumer service registers handlers with `@soniq.job` and runs a worker:
+A consumer service registers handlers with `@soniq.job()` and runs a worker:
 
 ```python
 from soniq import Soniq
@@ -39,16 +37,11 @@ async def send(order_id: int): ...
 await soniq.run_worker()
 ```
 
-The same instance can also enqueue (the worker process itself often
-re-enqueues follow-up jobs). The "consumer" label is just shorthand for
-"this deployment runs a worker."
+The same instance can also enqueue. The worker process often enqueues follow-up jobs. The "consumer" label means "this deployment runs a worker".
 
-## Shared-library shape (recommended cross-service)
+## Share a task stub between services
 
-When the producer and the consumer live in different repos or services,
-share a small stub package that declares the canonical task name and an
-args model. Both sides import it; neither side needs to know about the
-other's internals.
+When the producer and the consumer live in different repositories, share a small stub package. It declares the canonical job name and an args model. Both sides import it, and neither side needs the internals of the other.
 
 ```python
 # billing_tasks/__init__.py - imported by both producer and consumer
@@ -87,7 +80,9 @@ async def send_invoice(order_id: str, customer: str): ...
 await soniq.run_worker(queues=["billing"])
 ```
 
-The `TaskRef` carries the canonical name, the args model, and the
-default queue across the wire. The producer gets validation at enqueue
-time; the consumer gets validation again at dispatch time. No shared
-runtime, no class hierarchy.
+The `TaskRef` carries the canonical name, the args model and the default queue between the services. The producer gets validation at enqueue time. The consumer gets validation again at dispatch time. The services share no runtime and no class hierarchy.
+
+## Next steps
+
+- [Cross-service jobs](../guides/cross-service-jobs.md) - the full producer and consumer guide
+- [Deployment](deployment.md) - systemd, Docker Compose, Kubernetes and Supervisor recipes

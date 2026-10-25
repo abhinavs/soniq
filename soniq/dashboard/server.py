@@ -3,6 +3,8 @@ FastAPI web dashboard for Soniq.
 """
 
 import hmac
+import logging
+import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -21,10 +23,27 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
+logger = logging.getLogger(__name__)
+
+# The page is one file with an inline script and style, so both need
+# 'unsafe-inline'. Everything else is locked down; it only talks to itself.
+_SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    ),
+}
+
+# Postgres text can't hold NUL, so a filter with one would 500 in the driver.
+_NO_NUL = r"^[^\x00]*$"
+
 
 def _is_dashboard_write_enabled() -> bool:
     """Whether mutating dashboard actions are enabled by env config."""
-    import os
 
     return os.environ.get("SONIQ_DASHBOARD_WRITE_ENABLED", "").lower() in {
         "1",
@@ -43,8 +62,6 @@ def _require_write_authorization(request: "Request") -> None:
     There is no localhost exemption: a reverse proxy on the same host
     connects from loopback, so "local" can't be told apart from "public".
     """
-    import os
-
     if not _is_dashboard_write_enabled():
         raise HTTPException(
             status_code=403,
@@ -54,7 +71,9 @@ def _require_write_authorization(request: "Request") -> None:
             ),
         )
 
-    if os.environ.get("SONIQ_DASHBOARD_API_KEY"):
+    # The key was read once when the app was built, the same value the
+    # middleware checks, so a key that shows up in the env later can't count.
+    if request.app.state.api_key:
         return  # Global middleware already validated the key.
     raise HTTPException(
         status_code=403,
@@ -92,10 +111,12 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         lifespan=_lifespan,
     )
     app.state.data = data
+    # Read once: the middleware, the write guard and the page's write flag
+    # must all use this same value.
+    dashboard_api_key = os.environ.get("SONIQ_DASHBOARD_API_KEY", "")
+    app.state.api_key = dashboard_api_key
 
     # CORS: restrict origins to configured list or localhost default
-    import os
-
     allowed_origins_env = os.environ.get("SONIQ_DASHBOARD_ALLOWED_ORIGINS", "")
     if allowed_origins_env:
         allowed_origins = [
@@ -112,8 +133,43 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        response = await call_next(request)
+        for name, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
+
+    # Without a key, a page the operator visits could rebind its own hostname
+    # to this server and read /api/*. A Host check stops that. With a key the
+    # browser can't make the request, so any hostname is fine.
+    if not dashboard_api_key:
+        from starlette.responses import PlainTextResponse
+
+        allowed_hosts = {"localhost", "127.0.0.1", "[::1]"} | {
+            h.strip().lower()
+            for h in os.environ.get("SONIQ_DASHBOARD_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        }
+
+        @app.middleware("http")
+        async def _check_host(request, call_next):
+            host = request.headers.get("host", "").lower()
+            # Drop the port; an IPv6 literal keeps its brackets.
+            name = (
+                host.rsplit(":", 1)[0]
+                if not host.endswith("]") and ":" in host
+                else host
+            )
+            if name not in allowed_hosts:
+                return PlainTextResponse(
+                    "Invalid Host header. Set SONIQ_DASHBOARD_API_KEY or add the "
+                    "host to SONIQ_DASHBOARD_ALLOWED_HOSTS.",
+                    status_code=400,
+                )
+            return await call_next(request)
+
     # Optional API key authentication
-    dashboard_api_key = os.environ.get("SONIQ_DASHBOARD_API_KEY", "")
     if dashboard_api_key:
         from starlette.middleware.base import BaseHTTPMiddleware
         from starlette.responses import JSONResponse
@@ -143,7 +199,9 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
     async def dashboard_home():
         """Main dashboard page"""
         # no-cache so a browser picks up a new page after a Soniq upgrade.
-        return HTMLResponse(get_dashboard_html(), headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(
+            get_dashboard_html(dashboard_api_key), headers={"Cache-Control": "no-cache"}
+        )
 
     @app.get("/api/stats")
     async def api_job_stats() -> Dict[str, int]:
@@ -152,7 +210,8 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
     @app.get("/api/jobs")
     async def api_recent_jobs(
-        limit: int = Query(50, ge=1, le=1000), queue: Optional[str] = None
+        limit: int = Query(50, ge=1, le=1000),
+        queue: Optional[str] = Query(None, pattern=_NO_NUL),
     ) -> List[Dict[str, Any]]:
         """Get recent jobs"""
         return await data.get_recent_jobs(limit=limit, queue=queue)
@@ -173,12 +232,14 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
     ) -> Dict[str, str]:
         """Replay a dead-letter row back into the live queue."""
         _require_write_authorization(request)
+        if await data.get_dead_letter_job_exists(dead_letter_id) is False:
+            raise HTTPException(status_code=404, detail="Dead-letter job not found")
         new_job_id = await data.replay_dead_letter(dead_letter_id)
         if not new_job_id:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Unable to replay dead-letter job (not found, or its job "
+                    "Unable to replay dead-letter job (its job "
                     "is not in the modules the dashboard loaded - start "
                     "'soniq dashboard' with --jobs-modules or SONIQ_JOBS_MODULES)."
                 ),
@@ -189,9 +250,14 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
     async def api_delete_job(job_id: str, request: Request) -> Dict[str, str]:
         """Delete a job"""
         _require_write_authorization(request)
-        success = await data.delete_job(job_id)
-        if not success:
-            raise HTTPException(status_code=400, detail="Unable to delete job")
+        result = await data.delete_job(job_id)
+        if result == "missing":
+            raise HTTPException(status_code=404, detail="Job not found")
+        if result == "processing":
+            raise HTTPException(
+                status_code=409,
+                detail="Job is running; wait for it to finish or cancel it first",
+            )
         return {"message": "Job deleted"}
 
     @app.post("/api/jobs/{job_id}/cancel")
@@ -235,10 +301,10 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
     @app.get("/api/jobs/search")
     async def api_search_jobs(
-        query: Optional[str] = None,
-        status: Optional[str] = None,
-        queue: Optional[str] = None,
-        job_name: Optional[str] = None,
+        query: Optional[str] = Query(None, pattern=_NO_NUL),
+        status: Optional[str] = Query(None, pattern=_NO_NUL),
+        queue: Optional[str] = Query(None, pattern=_NO_NUL),
+        job_name: Optional[str] = Query(None, pattern=_NO_NUL),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0, le=1_000_000),
     ) -> Dict[str, Any]:
@@ -302,17 +368,12 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
     return app
 
 
-def get_dashboard_html() -> str:
+def get_dashboard_html(api_key: str = "") -> str:
     """The dashboard page, with the write flag filled in."""
     # Keep the UI in sync with the server-side mutating-endpoint gate.
-    import os
     from importlib.resources import files
 
-    can_write = (
-        "true"
-        if _is_dashboard_write_enabled() and os.environ.get("SONIQ_DASHBOARD_API_KEY")
-        else "false"
-    )
+    can_write = "true" if _is_dashboard_write_enabled() and api_key else "false"
     html = files("soniq.dashboard").joinpath("index.html").read_text("utf-8")
     return html.replace("__SONIQ_CAN_WRITE__", can_write)
 
@@ -334,6 +395,24 @@ async def run_dashboard(
     server = uvicorn.Server(config)
 
     print(f"Soniq Dashboard starting at http://{host}:{port}")
+    if not os.environ.get("SONIQ_DASHBOARD_API_KEY") and host not in (
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    ):
+        print(
+            "No API key is set, so only localhost Host headers are accepted. "
+            "Set SONIQ_DASHBOARD_API_KEY, or list the hostnames you use in "
+            "SONIQ_DASHBOARD_ALLOWED_HOSTS."
+        )
+    if _is_dashboard_write_enabled() and not os.environ.get("SONIQ_DASHBOARD_API_KEY"):
+        msg = (
+            "SONIQ_DASHBOARD_WRITE_ENABLED is true but SONIQ_DASHBOARD_API_KEY is "
+            "not set, so the dashboard stays read-only. Set a key to allow "
+            "replay/cancel/delete."
+        )
+        logger.warning(msg)
+        print(msg)
     print("Press Ctrl+C to stop")
 
     await server.serve()

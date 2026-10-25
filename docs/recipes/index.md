@@ -1,3 +1,7 @@
+---
+description: Copy-paste Soniq recipes for Python background jobs on PostgreSQL: email, file processing, reports, webhooks, retry policies, metrics and cross-service stubs.
+---
+
 # Recipes
 
 *Copy-paste starting points for real use cases.* Each recipe is a complete, working example for a specific job type - lift it into your codebase and adapt.

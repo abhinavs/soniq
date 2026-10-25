@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 async def app():
     a = Soniq(database_url=TEST_DATABASE_URL)
-    await a.ensure_initialized()
+    await a.setup()
     pool = await a._get_pool()
     async with pool.acquire() as conn:
         await conn.execute("TRUNCATE soniq_jobs, soniq_dead_letter_jobs CASCADE")

@@ -79,9 +79,12 @@ def _select(from_version: Optional[str]) -> List[Tuple[str, str, str]]:
 
 
 def render_sql(migrations: List[Tuple[str, str, str]]) -> str:
-    parts = []
+    # One transaction, so a failure applies nothing. Without it `psql -f`
+    # autocommits each statement and ignores 0006's SET LOCAL lock_timeout.
+    parts = ["BEGIN;\n"]
     for version, name, sql in migrations:
         parts.append(f"-- soniq migration {version}_{name}\n{sql.rstrip()}\n")
+    parts.append("COMMIT;\n")
     return "\n".join(parts)
 
 

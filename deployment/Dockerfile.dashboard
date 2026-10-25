@@ -1,7 +1,7 @@
 # Soniq Dashboard Dockerfile
 # Multi-stage build for optimized production image
 
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,12 +14,12 @@ RUN apt-get update && apt-get install -y \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install dependencies
+# Copy your app's requirements and install them
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Soniq
-RUN pip install soniq[dashboard]
+RUN pip install "soniq[dashboard]"
 
 # Production stage
 FROM python:3.11-slim
@@ -45,11 +45,12 @@ COPY --chown=soniq:soniq . .
 USER soniq
 
 # Expose dashboard port
-EXPOSE 8000
+EXPOSE 6161
 
-# Health check
+# The HTML page at / answers without the API key, so it works as a health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:6161/ || exit 1
 
-# Default command
-CMD ["soniq", "dashboard", "--host=0.0.0.0", "--port=8000"]
+# Set SONIQ_DASHBOARD_API_KEY when you listen on 0.0.0.0. Without it the
+# dashboard accepts only localhost Host headers.
+CMD ["soniq", "dashboard", "--host=0.0.0.0", "--port=6161"]

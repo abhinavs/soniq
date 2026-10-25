@@ -1,6 +1,10 @@
-# Upgrading from 0.1.0 to 0.2.0
+---
+description: Upgrade Soniq from 0.1.0 to 0.2.0 with no downtime. Apply migration 0006, roll out workers in any order, fix deprecation warnings, and roll back if needed.
+---
 
-You can upgrade without downtime. Jobs already in the queue keep running, recurring schedules keep firing, and 0.1.0 and 0.2.0 workers can share the database while you roll.
+# Upgrade Soniq from 0.1.0 to 0.2.0
+
+Upgrading from Soniq 0.1.0 to 0.2.0 needs no downtime. Jobs in the queue keep running, recurring schedules keep firing, and 0.1.0 and 0.2.0 workers can share one PostgreSQL database during the roll.
 
 ## What changes in the database
 
@@ -8,7 +12,7 @@ You can upgrade without downtime. Jobs already in the queue keep running, recurr
 
 - Two functions, `soniq_enqueue()` and `soniq_get_job()`, so code in other languages can enqueue jobs and read their results. See [Storage format](../reference/storage-format.md). 0.1.0 never calls them.
 - The `soniq_jobs.max_attempts` column default goes from 3 to 4. Python always sets the value itself, so this only matters for raw `INSERT`s that leave the column out. 4 matches what Python writes by default (`retries=3`, plus the first attempt).
-- 0.1.0 stored some dead-letter `tags` as a JSON string holding an object. The migration rewrites those rows as objects. 0.2.0 reads both shapes, because a 0.1.0 worker that is still running can write more. Rows a 0.1.0 worker writes after the migration keep the old shape, so a dead-letter search by tag can miss them. `soniq setup` won't rerun the migration, so once the last 0.1.0 worker is gone, run its `UPDATE soniq_dead_letter_jobs` statement by hand (`soniq migrations export --sql --from 0005` prints it). It is safe to run more than once.
+- 0.1.0 stored dead-letter `tags` as a JSON string holding an object. The migration rewrites those rows as objects, and 0.2.0 reads both shapes. 0.1.0 itself never sets tags, so only your own code calling `backend.mark_job_dead_letter(tags=...)` on 0.1.0 can write more in the old shape after the migration, and a dead-letter search by tag can miss those rows. If you do that, run the migration's `UPDATE soniq_dead_letter_jobs` statement by hand once the last 0.1.0 code is gone (`soniq migrations export --sql --from 0005` prints it). It is safe to run more than once.
 
 The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row, and the other way round.
 
@@ -27,7 +31,15 @@ The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row
       > migrations/versions/xxxx_soniq_0006.py
     ```
 
-    `--sql --from 0005` gives plain SQL for other tools. See [Migrations with Alembic](migrations.md).
+    `--sql --from 0005` gives plain SQL for other tools, wrapped in its own `BEGIN`/`COMMIT`. See [Migrations with Alembic](migrations.md).
+
+    **If you applied `0006_sql_api` from a 0.2.0 release candidate**, apply it again. The final version fixes a privilege escalation in `soniq_enqueue()` on Postgres 14 and older, and `soniq setup` won't rerun a migration it has recorded. The migration is safe to run twice:
+
+    ```bash
+    soniq migrations export --sql --from 0005 | psql -v ON_ERROR_STOP=1 "$DATABASE_URL"
+    ```
+
+    **On a database created before Postgres 15 (including one moved to a newer version with `pg_upgrade`), if other roles can log in to the database**, also run `REVOKE CREATE ON SCHEMA public FROM PUBLIC` once as the database owner. Otherwise any of those roles can create a function in `public` that shadows a built-in and runs as whoever calls it, the superuser running `soniq setup` included. 0.2.0 qualifies the built-ins it calls, but your own SQL and extensions may not. See [Going to production](going-to-production.md#on-a-database-created-before-postgres-15-revoke-create-on-public).
 
 2. **Roll out the new code** to workers, schedulers and producers, in any order. Old and new workers process each other's jobs.
 
@@ -47,3 +59,8 @@ Old rows need nothing from you. A stringified datetime that 0.1.0 put in `args` 
 Deploy the 0.1.0 code again and leave the database as it is. 0.1.0 ignores the new functions, accepts the new column default, and reads the fixed tags. `soniq migrate-status` on 0.1.0 shows no pending migrations.
 
 If you rolled back the dashboard too, its new endpoints (`/api/dead-letter`, `/api/workers`) go with it.
+
+## Next steps
+
+- [Migrations with Alembic](migrations.md) - export the 0006 migration as an Alembic revision
+- [Going to production](going-to-production.md) - the production checklist

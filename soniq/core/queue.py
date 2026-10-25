@@ -10,6 +10,15 @@ from typing import Optional, Union
 from pydantic import ValidationError
 
 
+def validation_summary(e: ValidationError) -> str:
+    """Describe a pydantic error by field and message only, never the input
+    values, which can hold secrets and end up in logs and stored errors."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
+        for err in e.errors(include_input=False, include_url=False)
+    )
+
+
 def _validate_job_arguments(job_name: str, job_meta: dict, kwargs: dict) -> None:
     """
     Validate job arguments against the job's Pydantic model.
@@ -27,7 +36,9 @@ def _validate_job_arguments(job_name: str, job_meta: dict, kwargs: dict) -> None
         try:
             args_model(**kwargs)  # Validate arguments
         except ValidationError as e:
-            raise ValueError(f"Invalid arguments for job {job_name}: {e}") from e
+            raise ValueError(
+                f"Invalid arguments for job {job_name}: {validation_summary(e)}"
+            ) from e
 
 
 def _normalize_scheduled_time(

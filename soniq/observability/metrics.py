@@ -13,6 +13,8 @@ Status values passed to `record_job_end`:
 - `"failed"`       handler raised; the worker will retry per RetryPolicy
 - `"dead_letter"`  retries exhausted (or RetryPolicy returned None)
 - `"snoozed"`      handler returned `Snooze(...)`; not a retry burn
+- `"reclaimed"`    the job was requeued and claimed by another worker
+                   before this run finished; its outcome was dropped
 
 Stability: this Protocol may grow new optional methods in 0.0.2+ as
 more events are introduced (queue depth, per-queue throughput). New

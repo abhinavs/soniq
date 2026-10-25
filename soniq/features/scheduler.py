@@ -216,7 +216,8 @@ class _SqlStore:
         async with self._conn() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))", sched.name
+                    "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext($1))",
+                    sched.name,
                 )
                 await conn.execute(
                     "DELETE FROM soniq_recurring_jobs WHERE job_name = $1",

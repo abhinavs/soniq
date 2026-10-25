@@ -1,6 +1,10 @@
-# Supervisor
+---
+description: Run Soniq workers, the scheduler and the dashboard under Supervisor with a PostgreSQL job queue. Program config, log rotation and graceful stop settings.
+---
 
-Good for older setups or shared environments. File: `deployment/supervisor.conf`.
+# Run Soniq workers under Supervisor
+
+Supervisor suits older setups and shared hosts. The repo has the full file at `deployment/supervisor.conf`. The example below is condensed to a worker, a scheduler and a dashboard. Run `soniq setup` once per deploy before you start the programs.
 
 ```ini
 [group:soniq]
@@ -13,12 +17,13 @@ user=soniq
 autostart=true
 autorestart=true
 startretries=3
-stopwaitsecs=310
+stopsignal=TERM
+stopwaitsecs=45
 redirect_stderr=true
 stdout_logfile=/var/log/soniq/worker.log
 stdout_logfile_maxbytes=10MB
 stdout_logfile_backups=5
-environment=SONIQ_DATABASE_URL="postgresql://soniq:password@localhost/soniq_prod",SONIQ_LOG_LEVEL="INFO",SONIQ_JOBS_MODULES="myapp.jobs"
+environment=SONIQ_DATABASE_URL="postgresql://soniq:password@localhost/soniq_prod",SONIQ_LOG_LEVEL="INFO",SONIQ_JOBS_MODULES="myapp.jobs",SONIQ_SCHEDULER_SUPPRESS_WARNING="1"
 
 [program:soniq_scheduler]
 command=/opt/soniq/venv/bin/soniq scheduler
@@ -34,7 +39,7 @@ stdout_logfile_backups=5
 environment=SONIQ_DATABASE_URL="postgresql://soniq:password@localhost/soniq_prod",SONIQ_LOG_LEVEL="INFO",SONIQ_JOBS_MODULES="myapp.jobs"
 
 [program:soniq_dashboard]
-command=/opt/soniq/venv/bin/soniq dashboard --host=0.0.0.0 --port=8000
+command=/opt/soniq/venv/bin/soniq dashboard --host=127.0.0.1 --port=6161
 directory=/opt/soniq
 user=soniq
 autostart=true
@@ -47,7 +52,7 @@ stdout_logfile_backups=5
 environment=SONIQ_DATABASE_URL="postgresql://soniq:password@localhost/soniq_prod"
 ```
 
-## Managing with Supervisor
+## Manage the programs
 
 ```bash
 sudo cp deployment/supervisor.conf /etc/supervisor/conf.d/soniq.conf
@@ -57,7 +62,9 @@ sudo supervisorctl start soniq:*
 sudo supervisorctl status
 ```
 
-Set `stopwaitsecs` on every worker program to at least your longest job timeout plus a buffer. Default (10s) is too short - workers will be `SIGKILL`ed mid-job and their in-flight rows will end up stuck in `processing` until the heartbeat sweep recovers them.
+> **Warning:** Set `stopwaitsecs` on every worker program to more than `SONIQ_SHUTDOWN_TIMEOUT` (30 seconds by default). The Supervisor default is 10 seconds. With that default, Supervisor sends `SIGKILL` to workers mid-job, and their in-flight rows stay in `processing` until the heartbeat sweep recovers them. If you raise `SONIQ_SHUTDOWN_TIMEOUT` for long jobs, raise `stopwaitsecs` too.
+
+The dashboard example binds to `127.0.0.1`, so put a reverse proxy in front of it. To bind to `0.0.0.0`, also set `SONIQ_DASHBOARD_API_KEY`.
 
 ## See also
 

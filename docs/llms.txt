@@ -11,18 +11,20 @@ If you are an agent generating Soniq code, the most common four mistakes are:
 3. Forgetting `await` on `enqueue` from sync code. Wrap in `asyncio.run(...)` for one-shot scripts.
 4. Returning a non-JSON-serialisable value from a handler. Soniq stores results as JSONB - anything else is logged as an error and stored as `None`. Return dicts, lists, scalars, or persist large outputs out-of-band and return a reference.
 
-Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brief.
+Read [AGENTS.md](https://github.com/abhinavs/soniq/blob/main/AGENTS.md) at the repo root for a longer agent-targeted brief.
 
 To create jobs from another language, call the `soniq_enqueue()` SQL function described in [Storage format](reference/storage-format.md). A producer with no local job registry must set `enqueue_validation="none"` to enqueue by string name; see [Cross-service jobs](guides/cross-service-jobs.md).
 
 ## Start here
 
+- [Documentation home](index.md): the docs landing page with links to every section.
+- [Installation](getting-started/installation.md): install extras, Python and PostgreSQL requirements, and job module discovery.
 - [Quickstart](quickstart.md): five-minute path from `pip install` to first job. Canonical shape of `Soniq(database_url=...)`, `@soniq.job()`, `await soniq.enqueue(...)`, `soniq setup`, `soniq worker myapp.jobs:soniq`.
 - [Why Soniq?](why-soniq.md): the case for picking Soniq over Celery/RQ/Arq. Trade-offs and when NOT to use it.
 - [Compare tools](compare.md): Soniq next to Celery, RQ, arq, Taskiq and the other Postgres-backed queues, with when to pick each.
 - [Benchmarks](benchmarks.md): throughput and latency numbers, the machine, and how to reproduce them.
 - [Stability and versioning](stability.md): what stays stable between releases and how breaking changes are announced.
-- [AGENTS.md](../AGENTS.md): the agent-targeted brief - canonical patterns, anti-patterns, and where to look up details.
+- [AGENTS.md](https://github.com/abhinavs/soniq/blob/main/AGENTS.md): the agent-targeted brief - canonical patterns, anti-patterns, and where to look up details.
 
 ## Tutorial (read in order; ~30 minutes total)
 
@@ -35,18 +37,23 @@ To create jobs from another language, call the `soniq_enqueue()` SQL function de
 
 ## Reference (look up by name)
 
+- [Python API index](api/index.md): the map of the Python API pages.
 - [Python API: Soniq](api/soniq.md): `Soniq(...)` constructor, lifecycle (`ensure_initialized`, `close`), and `soniq.*` services (scheduler, dead_letter, webhooks).
 - [Python API: Jobs](api/jobs.md): `@soniq.job()`, `@soniq.periodic()`, `enqueue()`, `schedule()`, `JobContext`, `JobStatus`, the `soniq.schedules` cron DSL.
 - [Python API: Worker](api/worker.md): `soniq worker` CLI, `soniq.run_worker()`, env-var configuration, graceful shutdown.
 - [Python API: Hooks](api/hooks.md): `@soniq.before_job`, `@soniq.after_job`, `@soniq.on_error` for logging, metrics, tracing.
+- [Python API: Dead-letter queue](api/dead-letter.md): `soniq.dead_letter` methods to list, replay, delete, tag, export and measure dead-lettered jobs.
+- [CLI index](cli/index.md): the CLI section overview.
 - [CLI commands](cli/commands.md): `setup`, `worker`, `scheduler`, `dashboard`, `inspect`, `dead-letter`, `status`, `migrate-status`.
-- [Dead-letter queue](reference/dead-letter.md): how the DLQ works, how to inspect, replay, and purge.
+- [Dead-letter queue](reference/dead-letter.md): how the DLQ works, the table schema, and the CLI to inspect, replay, and purge.
+- [Reference index](reference/index.md): the reference section overview.
 - [Storage format](reference/storage-format.md): `soniq_enqueue()` and `soniq_get_job()` for any language, the tables and JSON rules, and the `args_hash` algorithm.
 - [Deprecations](deprecations.md): deprecated names, when they go away, and what to use instead.
 - [Glossary](reference/glossary.md): one-paragraph definitions for the words the docs use (job, handler, task name, worker, scheduler, queue, heartbeat, DLQ, replay, at-least-once, transactional enqueue, backend).
 
 ## Guides (task-shaped, not API-shaped)
 
+- [Guides index](guides/index.md): all guides in one list.
 - [FastAPI](guides/fastapi.md): the `lifespan()` helper, running the worker in the API process, moving it out later, and moving off `BackgroundTasks`.
 - [Transactional enqueue](guides/transactional-enqueue.md): pass a SQLAlchemy `AsyncSession` or `AsyncConnection`, a raw asyncpg connection, or a psycopg 3 connection as `connection=`. Tortoise works through a private attribute.
 - [Common patterns](guides/common-patterns.md): idempotency, fan-out, retry policies, deduplication keys.
@@ -61,8 +68,10 @@ To create jobs from another language, call the `soniq_enqueue()` SQL function de
 
 ## Production
 
+- [Production index](production/index.md): the production section overview.
 - [Going to production](production/going-to-production.md): the eight things that matter for a healthy deploy.
 - [Deployment overview](production/deployment.md): prerequisites, queue routing, performance tuning. Pointers to [systemd](production/deployment-systemd.md), [Docker Compose](production/deployment-docker-compose.md), [Kubernetes](production/deployment-kubernetes.md), and [supervisor](production/deployment-supervisor.md).
+- [Deployment shapes](production/deployment-shapes.md): run Soniq as a producer service, a consumer service, or both, with shared `TaskRef` stubs.
 - [PostgreSQL tuning](production/postgres.md): connection pool sizing, autovacuum, partitioning.
 - [Migrations with Alembic](production/migrations.md): export Soniq's schema SQL with `soniq migrations export` and apply it from your own migration tool.
 - [Upgrading from 0.1.0](production/upgrading.md): what migration 0006 does, the deploy order, and rolling back.
@@ -70,7 +79,7 @@ To create jobs from another language, call the `soniq_enqueue()` SQL function de
 
 ## Recipes (copy-pasteable)
 
-- [Email jobs](recipes/email-jobs.md), [file processing](recipes/file-processing.md), [scheduled reports](recipes/scheduled-reports.md), [webhook delivery](recipes/webhook-delivery.md), [cross-service task stubs](recipes/cross-service-task-stubs.md), [custom retry policy](recipes/custom-retry-policy.md), [custom metrics sink](recipes/custom-metrics-sink.md).
+- [Recipes index](recipes/index.md), [email jobs](recipes/email-jobs.md), [file processing](recipes/file-processing.md), [scheduled reports](recipes/scheduled-reports.md), [webhook delivery](recipes/webhook-delivery.md), [cross-service task stubs](recipes/cross-service-task-stubs.md), [custom retry policy](recipes/custom-retry-policy.md), [custom metrics sink](recipes/custom-metrics-sink.md).
 
 ## Troubleshooting
 
@@ -78,5 +87,6 @@ To create jobs from another language, call the `soniq_enqueue()` SQL function de
 
 ## Optional
 
+- [Dashboard index](dashboard/index.md): the dashboard section overview.
 - [Dashboard overview](dashboard/overview.md): the bundled web UI for inspecting queues, jobs, and workers.
 - [Cron DSL](api/jobs.md#cron-string-dsl): the `every(...)`, `daily()`, `weekly()`, `monthly()` builders that produce plain cron strings.
