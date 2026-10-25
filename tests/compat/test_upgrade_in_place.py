@@ -1,22 +1,22 @@
-"""Upgrading in place from soniq 0.0.5 must just work.
+"""Upgrading in place from soniq 0.0.5 or 0.1.0 must just work.
 
-soniq 0.0.5 is installed from PyPI into its own virtualenv. That install
+The old soniq is installed from PyPI into its own virtualenv. That install
 sets up the database and leaves behind a normal job, a scheduled job, a
 unique job, a recurring schedule and a dead-lettered job. Then the code
-under test takes over: ``soniq setup`` must have nothing to apply, the
+under test takes over: ``soniq setup`` must apply only 0006, the
 scheduler must keep firing the old schedule, the worker must finish every
 old job, and the dead-lettered job must still be in the dead-letter queue.
 
-The 0.0.5 virtualenv is cached in pytest's cache directory, so only the
+Each old virtualenv is cached in pytest's cache directory, so only the
 first run needs the network.
 """
 
 import subprocess
 import time
 
-from .conftest import check, cli_env, fetch, old_venv, recreate_db, run_cli, run_until
+import pytest
 
-OLD_VERSION = "0.0.5"
+from .conftest import check, cli_env, fetch, old_venv, recreate_db, run_cli, run_until
 
 JOBS = """
 from datetime import timedelta
@@ -41,7 +41,7 @@ async def tick():
     pass
 """
 
-# Runs under soniq 0.0.5.
+# Runs under the old soniq.
 OLD_PRODUCER = """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -69,9 +69,10 @@ asyncio.run(main())
 """
 
 
-def test_upgrade_in_place(request, tmp_path):
+@pytest.mark.parametrize("old_version", ["0.0.5", "0.1.0"])
+def test_upgrade_in_place(request, tmp_path, old_version):
     url = recreate_db("soniq_compat_upgrade")
-    old = old_venv(request.config.cache.mkdir("soniq-0.0.5-venv"), OLD_VERSION)
+    old = old_venv(request.config.cache.mkdir(f"soniq-{old_version}-venv"), old_version)
     (tmp_path / "compat_upgrade_jobs.py").write_text(JOBS.replace("{url}", url))
     (tmp_path / "produce.py").write_text(OLD_PRODUCER)
     env = cli_env(SONIQ_DATABASE_URL=url, SONIQ_JOBS_MODULES="compat_upgrade_jobs")
@@ -93,8 +94,8 @@ def test_upgrade_in_place(request, tmp_path):
     # --- the code under test takes over ---
     check(
         run_cli("setup", env=env, cwd=tmp_path),
-        "Core schema is already up to date",
-        "Database setup completed (no migrations needed)",
+        "Applying 1 pending migrations",
+        "0006_sql_api",
     )
     check(
         run_cli("migrate-status", env=env, cwd=tmp_path),

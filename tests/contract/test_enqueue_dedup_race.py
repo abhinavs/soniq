@@ -4,8 +4,10 @@ Dedup enqueue under race conditions never returns a synthetic id.
 Contract: every id returned from ``create_job`` resolves to a real row.
 The Postgres path used to fall back to the caller-passed ``job_id`` when
 the post-conflict lookup missed (e.g. the queued row transitioned to
-processing between INSERT and SELECT). This test simulates that exact
-race deterministically by hooking the connection between the two calls.
+processing between INSERT and SELECT). Now it inserts again: the dedup
+index only covers queued rows, so once the old row is claimed the key is
+free. This test simulates that race deterministically by hooking the
+connection between the two calls.
 """
 
 from __future__ import annotations
@@ -96,11 +98,6 @@ async def test_dedup_returns_real_id_when_row_transitions_mid_flight(backend):
             scheduled_at=None,
         )
 
-    assert returned_id != caller_id, (
-        f"create_job returned the caller-provided id {caller_id!r}, which is "
-        f"the synthetic-fallback bug: that id was never persisted."
-    )
-
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, status FROM soniq_jobs WHERE id = $1",
@@ -109,6 +106,6 @@ async def test_dedup_returns_real_id_when_row_transitions_mid_flight(backend):
     assert (
         row is not None
     ), f"Returned id {returned_id!r} does not resolve to any soniq_jobs row."
-    assert (
-        str(row["id"]) == seed_id
-    ), f"Returned id should be the seed row's id ({seed_id}), got {returned_id}"
+    # The seed was claimed, so the retry queued a fresh job under the key.
+    assert str(row["id"]) != seed_id
+    assert row["status"] == "queued"

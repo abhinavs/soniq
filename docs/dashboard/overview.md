@@ -47,9 +47,9 @@ export SONIQ_DASHBOARD_WRITE_ENABLED=true
 export SONIQ_DASHBOARD_API_KEY="$(openssl rand -hex 32)"
 ```
 
-Write mode needs both variables. Once the key is set, every request (reads too)
+Write mode needs both variables; with only the first, the page stays read-only. Once the key is set, every request (reads too)
 must send it in the `X-API-Key` header or the `?api_key=` query parameter.
-The page asks for the key the first time and keeps it for the browser tab.
+The HTML page itself and CORS preflight requests load without the key, also when mounted under a prefix. The page asks for the key the first time and keeps it for the browser tab.
 There is no localhost exemption, because a reverse proxy on the same host
 looks exactly like a local caller.
 
@@ -105,7 +105,7 @@ the source of truth if this table drifts.
 | `GET` | `/` | HTML dashboard page. |
 | `GET` | `/api/stats` | Aggregate job counts by status. Returns `dict[str, int]`. |
 | `GET` | `/api/jobs?queue=...&limit=...` | Most recent jobs, optionally for one queue. Returns `list[dict]`. |
-| `GET` | `/api/jobs/{job_id}` | Single job details. Returns `dict`. |
+| `GET` | `/api/jobs/{job_id}` | Single job details. Dead-lettered jobs are found too, with status `dead_letter`. Returns `dict`. |
 | `GET` | `/api/queues` | Per-queue statistics. Returns `list[dict]`. |
 | `GET` | `/api/metrics?hours=24` | Finished jobs in the window. See [Metrics](#metrics). Returns `dict`. |
 | `GET` | `/api/workers` | Registered workers with their last heartbeat. Returns `list[dict]`. |
@@ -117,14 +117,22 @@ the source of truth if this table drifts.
 | `GET` | `/api/system/health` | System health check. Returns `dict`. |
 | `GET` | `/api/tasks/drift` | Tasks registered on the running app vs. tasks observed in the DB. |
 | `GET` | `/api/panels` | Available dashboard panels. |
-| `GET` | `/api/panels/{panel_id}` | Single panel descriptor. |
+| `GET` | `/api/panels/{panel_id}` | Single panel descriptor. `404` if the panel isn't registered. |
 
 ### Metrics
 
 A job counts once it has finished: it is either `done` in `soniq_jobs` or it was
 moved to the dead-letter table. Queued, running and cancelled jobs don't count.
 The success rate is done jobs divided by finished jobs, and a retry that later
-succeeds counts as a success. Job types use the same rule over all time.
+succeeds counts as a success. Job types use the same rule over all time, include job names whose jobs all
+failed, and show the 50 busiest names. Average run time is measured from when a
+job was enqueued to when it finished, so it includes time spent waiting in the
+queue (jobs don't record when processing started). The health error rate is
+dead-lettered jobs divided by finished jobs over the last hour.
+
+Paging and window parameters are validated: `limit` is 1 to 1000, `offset` is 0 or
+more, and `hours` is 1 to 8760. Anything else returns `422`. Search covers live
+jobs only; dead-lettered jobs are under Failed.
 
 ### Write endpoints
 

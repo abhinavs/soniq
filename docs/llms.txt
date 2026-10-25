@@ -13,6 +13,8 @@ If you are an agent generating Soniq code, the most common four mistakes are:
 
 Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brief.
 
+To create jobs from another language, call the `soniq_enqueue()` SQL function described in [Storage format](reference/storage-format.md). A producer with no local job registry must set `enqueue_validation="none"` to enqueue by string name; see [Cross-service jobs](guides/cross-service-jobs.md).
+
 ## Start here
 
 - [Quickstart](quickstart.md): five-minute path from `pip install` to first job. Canonical shape of `Soniq(database_url=...)`, `@soniq.job()`, `await soniq.enqueue(...)`, `soniq setup`, `soniq worker myapp.jobs:soniq`.
@@ -39,7 +41,7 @@ Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brie
 - [Python API: Hooks](api/hooks.md): `@soniq.before_job`, `@soniq.after_job`, `@soniq.on_error` for logging, metrics, tracing.
 - [CLI commands](cli/commands.md): `setup`, `worker`, `scheduler`, `dashboard`, `inspect`, `dead-letter`, `status`, `migrate-status`.
 - [Dead-letter queue](reference/dead-letter.md): how the DLQ works, how to inspect, replay, and purge.
-- [Storage format](reference/storage-format.md): the tables and JSON rules for reading and writing jobs from any language, and the `args_hash` algorithm.
+- [Storage format](reference/storage-format.md): `soniq_enqueue()` and `soniq_get_job()` for any language, the tables and JSON rules, and the `args_hash` algorithm.
 - [Deprecations](deprecations.md): deprecated names, when they go away, and what to use instead.
 - [Glossary](reference/glossary.md): one-paragraph definitions for the words the docs use (job, handler, task name, worker, scheduler, queue, heartbeat, DLQ, replay, at-least-once, transactional enqueue, backend).
 
@@ -63,6 +65,7 @@ Read [AGENTS.md](../AGENTS.md) at the repo root for a longer agent-targeted brie
 - [Deployment overview](production/deployment.md): prerequisites, queue routing, performance tuning. Pointers to [systemd](production/deployment-systemd.md), [Docker Compose](production/deployment-docker-compose.md), [Kubernetes](production/deployment-kubernetes.md), and [supervisor](production/deployment-supervisor.md).
 - [PostgreSQL tuning](production/postgres.md): connection pool sizing, autovacuum, partitioning.
 - [Migrations with Alembic](production/migrations.md): export Soniq's schema SQL with `soniq migrations export` and apply it from your own migration tool.
+- [Upgrading from 0.1.0](production/upgrading.md): what migration 0006 does, the deploy order, and rolling back.
 - [Reliability](production/reliability.md): graceful shutdown, stuck-job recovery, scheduler failover.
 
 ## Recipes (copy-pasteable)

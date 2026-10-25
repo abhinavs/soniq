@@ -1,5 +1,5 @@
 # Include migration SQL files
-recursive-include soniq/backends/postgres/migrations *.sql
+recursive-include soniq/backends/postgres/migrations *.sql README.md
 include soniq/dashboard/index.html
 
 # Include license and readme

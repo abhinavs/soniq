@@ -140,9 +140,28 @@ async def test_metrics_and_timeline_count_finished_jobs_only(app):
     assert isinstance(metrics["avg_processing_time_ms"], float)
 
     timeline = await data.get_job_timeline(hours=24)
-    assert sum(h["total_jobs"] for h in timeline) == 5
+    assert sum(h["total_jobs"] for h in timeline) == 6
     assert sum(h["completed"] for h in timeline) == 3
     assert sum(h["dead_letter"] for h in timeline) == 1
     for h in timeline:
         hour = datetime.fromisoformat(h["hour"])
         assert hour.astimezone(timezone.utc).minute == 0
+
+
+@pytest.mark.asyncio
+async def test_job_details_and_types_include_dead_lettered_jobs(app):
+    dlq_id = await _seed_dlq_row(app, job_name="only.failed")
+    data = DashboardService(app)
+
+    job = await data.get_job_details(dlq_id)
+    assert job is not None and job["status"] == "dead_letter"
+
+    types = await data.get_job_types_stats()
+    row = next(t for t in types if t["job_name"] == "only.failed")
+    assert row["dead_letter_count"] == 1
+    assert row["total_count"] == 1
+    assert row["success_rate"] == 0.0
+
+    health = await data.get_system_health()
+    assert health["error_rate_last_hour"] == 100.0
+    assert "+00:00" in health["timestamp"]

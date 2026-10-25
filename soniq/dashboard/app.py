@@ -7,7 +7,7 @@ bound to the configured ``Soniq`` and calls methods on it.
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -117,6 +117,11 @@ class DashboardService:
             results: List[Dict[str, Any]] = []
             for row in rows:
                 d = dict(row)
+                d["avg_processing_time_ms"] = (
+                    float(d["avg_processing_time_ms"])
+                    if d["avg_processing_time_ms"] is not None
+                    else None
+                )
                 d["dead_letter"] = dlq_by_queue.get(d["queue"], 0)
                 results.append(d)
             for queue, count in dlq_by_queue.items():
@@ -182,7 +187,17 @@ class DashboardService:
                 "SELECT * FROM soniq_jobs WHERE id = $1",
                 job_uuid,
             )
-            return dict(job) if job else None
+            if job:
+                return dict(job)
+            # Dead-lettered jobs leave soniq_jobs but keep their id here.
+            dead = await conn.fetchrow(
+                "SELECT * FROM soniq_dead_letter_jobs WHERE id = $1", job_uuid
+            )
+            if not dead:
+                return None
+            details = dict(dead)
+            details["status"] = "dead_letter"
+            return details
 
     async def replay_dead_letter(self, dead_letter_id: str) -> Optional[str]:
         """Replay a DLQ row through ``DeadLetterService.replay``.
@@ -256,11 +271,12 @@ class DashboardService:
                 "jobs_last_hour": recent_activity["jobs_last_hour"],
                 "completed_last_hour": recent_activity["completed_last_hour"],
                 "dead_lettered_last_hour": int(dead_lettered_last_hour or 0),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
     async def get_job_timeline(self, hours: int = 24) -> List[Dict[str, Any]]:
-        # total_jobs counts jobs by the hour they were enqueued. completed and
+        # total_jobs counts jobs (dead-lettered ones too) by the hour they were
+        # enqueued. completed and
         # dead_letter count them by the hour they finished.
         async with self._acquire() as conn:
             rows = await conn.fetch(
@@ -272,6 +288,10 @@ class DashboardService:
                 FROM (
                     SELECT DATE_TRUNC('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' as hour, 1 as enqueued, 0 as done, 0 as dead
                     FROM soniq_jobs WHERE created_at >= NOW() - make_interval(hours => $1)
+                    UNION ALL
+                    SELECT DATE_TRUNC('hour', original_created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 1, 0, 0
+                    FROM soniq_dead_letter_jobs
+                    WHERE original_created_at >= NOW() - make_interval(hours => $1)
                     UNION ALL
                     SELECT DATE_TRUNC('hour', updated_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 0, 1, 0
                     FROM soniq_jobs
@@ -297,6 +317,8 @@ class DashboardService:
             ]
 
     async def get_job_types_stats(self) -> List[Dict[str, Any]]:
+        # All time, busiest 50 names. Dead-lettered jobs live in their own
+        # table, so a name whose jobs all failed still shows up.
         async with self._acquire() as conn:
             stats = await conn.fetch(
                 """
@@ -309,45 +331,61 @@ class DashboardService:
                         FILTER (WHERE status = 'done') as avg_processing_time_ms,
                     MAX(updated_at) as last_run
                 FROM soniq_jobs
-                WHERE created_at > NOW() - INTERVAL '7 days'
                 GROUP BY job_name
-                ORDER BY total_count DESC
-                LIMIT 20
                 """
             )
             dlq_rows = await conn.fetch(
                 """
-                SELECT job_name, COUNT(*) AS dead_letter_count
+                SELECT job_name, COUNT(*) AS dead_letter_count,
+                       MAX(moved_to_dead_letter_at) AS last_run
                 FROM soniq_dead_letter_jobs
-                WHERE moved_to_dead_letter_at > NOW() - INTERVAL '7 days'
                 GROUP BY job_name
                 """
             )
-            dlq_by_name = {r["job_name"]: int(r["dead_letter_count"]) for r in dlq_rows}
+            dlq_by_name = {r["job_name"]: r for r in dlq_rows}
 
             def success_rate(done: int, failed: int) -> float:
                 # Out of finished jobs only, so queued work doesn't drag it down.
                 return round(done / (done + failed) * 100, 2) if done + failed else 0.0
 
-            return [
-                {
-                    "job_name": row["job_name"],
-                    "total_count": row["total_count"],
-                    "completed_count": row["completed_count"],
-                    "dead_letter_count": dlq_by_name.get(row["job_name"], 0),
-                    "queued_count": row["queued_count"],
-                    "success_rate": success_rate(
-                        row["completed_count"], dlq_by_name.get(row["job_name"], 0)
+            by_name: Dict[str, Dict[str, Any]] = {}
+            for row in stats:
+                dead = dlq_by_name.get(row["job_name"])
+                dead_count = int(dead["dead_letter_count"]) if dead else 0
+                last_run = max(
+                    (
+                        t
+                        for t in (row["last_run"], dead["last_run"] if dead else None)
+                        if t
                     ),
+                    default=None,
+                )
+                by_name[row["job_name"]] = {
+                    "job_name": row["job_name"],
+                    "total_count": row["total_count"] + dead_count,
+                    "completed_count": row["completed_count"],
+                    "dead_letter_count": dead_count,
+                    "queued_count": row["queued_count"],
+                    "success_rate": success_rate(row["completed_count"], dead_count),
                     "avg_processing_time_ms": round(
                         float(row["avg_processing_time_ms"] or 0), 2
                     ),
-                    "last_run": (
-                        row["last_run"].isoformat() if row["last_run"] else None
-                    ),
+                    "last_run": last_run.isoformat() if last_run else None,
                 }
-                for row in stats
-            ]
+            for name, dead in dlq_by_name.items():
+                if name not in by_name:
+                    by_name[name] = {
+                        "job_name": name,
+                        "total_count": int(dead["dead_letter_count"]),
+                        "completed_count": 0,
+                        "dead_letter_count": int(dead["dead_letter_count"]),
+                        "queued_count": 0,
+                        "success_rate": 0.0,
+                        "avg_processing_time_ms": 0.0,
+                        "last_run": dead["last_run"].isoformat(),
+                    }
+            ranked = sorted(by_name.values(), key=lambda t: -t["total_count"])
+            return ranked[:50]
 
     async def search_jobs(
         self,
@@ -430,7 +468,7 @@ class DashboardService:
                 """
                 SELECT COUNT(*) as total_recent
                 FROM soniq_jobs
-                WHERE updated_at > NOW() - INTERVAL '1 hour'
+                WHERE status = 'done' AND updated_at > NOW() - INTERVAL '1 hour'
                 """
             )
             dead_lettered_recent = await conn.fetchval(
@@ -441,9 +479,11 @@ class DashboardService:
             )
             dead_lettered_recent = int(dead_lettered_recent or 0)
 
+            # Finished jobs in the last hour: done plus dead-lettered.
+            finished_recent = recent_stats["total_recent"] + dead_lettered_recent
             error_rate = 0.0
-            if recent_stats["total_recent"] > 0:
-                error_rate = (dead_lettered_recent / recent_stats["total_recent"]) * 100
+            if finished_recent > 0:
+                error_rate = (dead_lettered_recent / finished_recent) * 100
 
             health_status = "healthy"
             if not db_healthy:
@@ -458,8 +498,8 @@ class DashboardService:
                 "database_healthy": db_healthy,
                 "queue_backlog": backlog,
                 "error_rate_last_hour": round(error_rate, 2),
-                "jobs_processed_last_hour": recent_stats["total_recent"],
-                "timestamp": datetime.now().isoformat(),
+                "jobs_processed_last_hour": finished_recent,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
     async def get_task_registry_drift(self, window_minutes: int = 60) -> Dict[str, Any]:

@@ -40,4 +40,4 @@ def test_alembic_output_is_valid_python():
     src = _export("--alembic", "--down-revision", "abc123")
     compile(src, "revision.py", "exec")
     assert "down_revision = 'abc123'" in src
-    assert "revision = 'soniq_0005'" in src
+    assert "revision = 'soniq_0006'" in src

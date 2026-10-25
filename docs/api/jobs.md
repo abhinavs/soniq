@@ -27,12 +27,13 @@ All parameters are optional.
 |---|---|---|---|
 | `name` | `str \| None` | `None` | Task name stored in the job's row. Always pass it. When omitted, it is derived from `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. See [Storage format](../reference/storage-format.md#job-names). |
 | `retries` | `int` | `3` | Maximum retry attempts on failure. Alias: `max_retries`. |
-| `priority` | `int` | `100` | Lower number = higher priority. Range: 1--1000. |
+| `priority` | `int` | `100` | Lower number = higher priority. |
 | `queue` | `str` | `"default"` | Queue name for this job. |
 | `unique` | `bool` | `False` | Deduplicate by arguments hash. If a matching job is already queued, the enqueue is skipped. |
 | `retry_delay` | `int \| float \| list[int \| float]` | `0` | Seconds to wait before each retry. Pass a list to set per-attempt delays (e.g. `[1, 5, 30]`). |
 | `retry_backoff` | `bool` | `False` | Apply exponential backoff to `retry_delay`. |
 | `retry_max_delay` | `int \| float \| None` | `None` | Cap on retry delay in seconds. |
+| `retry_jitter` | `bool` | `True` | With `retry_backoff`, apply full jitter to the backoff delay. |
 | `timeout` | `int \| float \| None` | `None` | Per-job timeout in seconds. `None` uses the global `job_timeout` setting (default 300s). |
 | `validate` | `type[BaseModel] \| None` | `None` | Pydantic model for argument validation at enqueue time. Alias: `args_model`. |
 
@@ -77,7 +78,7 @@ async def enqueue(
     args: dict | None = None,  # Function args (string / TaskRef shapes)
     priority: int = None,      # Override the job's default priority
     queue: str = None,         # Override the job's default queue
-    scheduled_at: datetime = None,  # Run at a specific time (UTC)
+    scheduled_at: datetime | timedelta | int | float = None,  # Run at a time (UTC), or after a delay
     unique: bool = None,       # Override the job's default uniqueness
     dedup_key: str = None,     # Custom deduplication key (instead of args hash)
     connection = None,         # Asyncpg connection for transactional enqueue
@@ -217,7 +218,7 @@ await soniq.schedule(
 ```python
 async def schedule(
     target,
-    run_at,            # UTC datetime, or seconds-from-now (int/float)
+    run_at,            # UTC datetime, timedelta, or seconds-from-now (int/float)
     *,
     args: dict | None = None,
     **kwargs,
@@ -258,7 +259,7 @@ The scheduler checks for due jobs every `--check-interval` seconds (default 60).
 |---|---|---|
 | `cron` | `str` or builder | A 5-field cron expression, or any object whose `__str__` is one (e.g. `daily().at("09:00")` from `soniq.schedules`). |
 | `every` | `timedelta` or `int`/`float` | Interval between runs. Use `timedelta` for clarity; ints are treated as seconds. |
-| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). `name` is optional and falls back to `f"{module}.{qualname}"`. |
+| `**job_kwargs` | | Any parameter accepted by `@soniq.job` (`name`, `queue`, `priority`, `retries`, etc.). Always pass `name`: without it the name falls back to `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. |
 
 Rules:
 - Specify exactly one of `cron=` or `every=`.
@@ -285,11 +286,11 @@ async def process_order(order_id: int, ctx: JobContext):
 | Attribute | Type | Description |
 |---|---|---|
 | `job_id` | `str` | UUID of this job. |
-| `job_name` | `str` | Fully qualified name (`module.function`). |
+| `job_name` | `str` | The registered job name (the `name=` you gave the decorator). |
 | `attempt` | `int` | Current attempt number (starts at 1). |
 | `max_attempts` | `int` | Total allowed attempts (`retries + 1`). |
 | `queue` | `str` | Queue this job is running in. |
-| `worker_id` | `str \| None` | UUID of the worker processing this job. |
+| `worker_id` | `str` | UUID of the worker processing this job. Empty string when the context is built outside a worker claim. |
 | `scheduled_at` | `datetime \| None` | When the job was scheduled to run, if it was delayed. |
 | `created_at` | `datetime \| None` | When the job was created. |
 

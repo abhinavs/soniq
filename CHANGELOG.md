@@ -6,29 +6,39 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [0.2.0] - Unreleased
 
-The first step towards rows that any language can read and write. See the new [Storage format](docs/reference/storage-format.md) page.
+The first step towards rows that any language can read and write: code in any language can now enqueue a job with one SQL call and read its result back. See the new [Storage format](docs/reference/storage-format.md) page.
 
 ### Upgrading from 0.1.0
 
-No schema change is needed. Rows written by 0.1.0 are still processed, and 0.1.0 workers can run rows written by 0.2.0, so a rolling deploy or a rollback is safe. Three behavior changes may need a look:
+Run `soniq setup` once to apply migration `0006_sql_api` (or export it with `soniq migrations export --from 0005`). It only adds functions, changes a column default and fixes old dead-letter tags, so it is safe while 0.1.0 workers run. Rows written by 0.1.0 are still processed, and 0.1.0 workers can run rows written by 0.2.0, so a rolling deploy or a rollback is safe. The full steps are in [Upgrading from 0.1.0](docs/production/upgrading.md). Some behavior changes may need a look:
 
 - A handler that returns something that isn't JSON (a `datetime`, a Pydantic model) used to have its `str()` stored as the result. Now the job still completes, the worker logs an error, and the stored result is `None`.
 - `enqueue` rejects `NaN`, `Infinity` and `-Infinity` with `SONIQ_TASK_ARGS_INVALID`. They used to get past the check and fail inside the database driver.
-- `@soniq.job()` without `name=` warns. See Deprecations.
+- `@soniq.job()` and `@soniq.periodic(...)` without `name=` warn. See Deprecations.
+- During a rolling deploy, a handler that returns something that isn't JSON gets its `str()` stored on a 0.1.0 worker and `None` on a 0.2.0 one.
+- The dashboard API changed: new endpoints, `limit`/`offset`/`hours` are range-checked (bad values get a 422), an unknown panel is a 404, metrics count only finished jobs, and timestamps are UTC with an offset. Rolling the dashboard back removes the new endpoints.
 
 ### Deprecations
 
-- **Job names derived from the module path.** `@soniq.job()` with no `name=` still registers as `module.function`, but warns and goes away in 1.0. Set `name=` to the name the warning prints, so jobs already queued under it still find their handler.
+- **Job names derived from the module path.** `@soniq.job()` or `@soniq.periodic(...)` with no `name=` still registers as `module.function`, but warns and goes away in 1.0. Set `name=` to the name the warning prints, so jobs already queued under it still find their handler. The warning also goes to the `soniq` logger at WARNING, so it shows up in worker logs. With `SONIQ_DEPRECATIONS=error` it fails at import, as the decorator runs.
 
 ### Changed
 
-- Soniq writes plain JSON only. The encoders no longer turn unknown objects into strings, and `NaN` is rejected instead of written.
+- Soniq writes plain JSON only for job args and results. Unknown objects are no longer turned into strings, and `NaN` is rejected instead of written. JSONB that your own code writes through `soniq.backend.acquire()` is encoded as in 0.1.0.
+- The `soniq_jobs.max_attempts` column default is 4, matching what Python writes (`retries=3` plus the first attempt). It only matters for raw `INSERT`s that leave the column out.
 - The docs and examples pass `name=` to every job.
 
 ### Fixed
 
 - A `ctx: JobContext` parameter now works in modules that use `from __future__ import annotations`. Before, the annotation was a string, so the worker never passed the context and `enqueue` rejected the job with "missing a required argument: 'ctx'".
-- Dead-letter `tags` passed to the Postgres backend were encoded twice and stored as a JSON string instead of an object.
+- Dead-letter `tags` passed to the Postgres backend were encoded twice and stored as a JSON string instead of an object. Migration 0006 fixes rows already stored that way, and reads accept both shapes.
+- Workers accept a job row whose `max_attempts` is NULL and use the handler's `retries=` for it, and such a job can be dead-lettered. Before, the worker raised `TypeError` and left the job stuck in `processing`. Soniq doesn't write NULL yet, and workers older than 0.2.0 still get stuck on it, so don't insert NULL yourself.
+- Enqueuing a job that is both unique and has a `dedup_key` raised a unique-violation error when the duplicate matched on the other key. It now returns the existing job's id, on asyncpg and psycopg.
+- `enqueue` sent two wake-up notifications per job on Postgres. It sends one.
+- The dashboard API key check now works when the dashboard is mounted under a path, and CORS preflight requests no longer need the key. Write buttons show only when both write mode and an API key are set.
+- Dashboard job details and job types include dead-lettered jobs, and the error rate is dead-lettered jobs over finished jobs in the last hour.
+- `soniq dashboard` without the dashboard extra prints only the install hint.
+- The wheel ships the migrations README, and the package lists Python 3.14.
 - Dashboard metrics counted queued and cancelled jobs as processed and left dead-lettered jobs out. Now only finished jobs count, and failures are the jobs that reached the dead-letter table. Job types use the same rule.
 - The dashboard chart counted completions in the hour a job was enqueued and dropped hours with only failures. It now buckets each event by when it happened, in whole UTC hours.
 - The dashboard works when mounted under a path, sends the API key it was given, and escapes job names and errors it shows.
@@ -36,7 +46,9 @@ No schema change is needed. Rows written by 0.1.0 are still processed, and 0.1.0
 
 ### Added
 
-- **Storage format page** with the tables, the JSON rules and the exact `args_hash` algorithm, including a test vector.
+- **SQL enqueue.** `soniq_enqueue()` enqueues a job from any language with the same name and args checks, unique-job dedup and worker wake-up as Python. `soniq_get_job()` reads its status and result, dead-lettered jobs included. Both are granted per role. `soniq_args_hash()` computes the unique-job hash in SQL.
+- **Storage format page** with the SQL functions, the tables, the JSON rules and the exact `args_hash` algorithm, including a test vector.
+- **Upgrade guide** from 0.1.0.
 - **A new dashboard.** Overview, jobs, failed jobs, queues, job types and workers, with light and dark themes, live refresh and a phone layout. Replay, cancel and delete still need write mode.
 - Dashboard endpoints `GET /api/dead-letter` and `GET /api/workers`.
 

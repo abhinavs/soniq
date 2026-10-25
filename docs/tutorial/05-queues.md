@@ -17,7 +17,7 @@ async def send_welcome_email(user_id: int):
 async def charge_subscription(account_id: str, amount: int):
     ...
 
-@soniq.job  # defaults to "default" queue
+@soniq.job(name="images.process_thumbnail")  # defaults to "default" queue
 async def process_thumbnail(image_id: str):
     ...
 ```

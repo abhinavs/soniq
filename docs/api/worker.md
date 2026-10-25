@@ -9,6 +9,7 @@ Workers fetch jobs from the database, execute them, and update their status. **T
 soniq worker
 soniq worker --concurrency 8 --queues emails,billing
 soniq worker --run-once  # process available jobs once and exit
+soniq worker myapp.jobs:soniq  # import the module and use that Soniq instance
 ```
 
 Reads `SONIQ_DATABASE_URL` (and other `SONIQ_*` settings) from the environment. See the CLI reference for the full flag list.
@@ -25,6 +26,7 @@ await soniq.run_worker(
     concurrency=4,
     run_once=False,
     queues=None,
+    shutdown_event=None,
 )
 ```
 
@@ -35,6 +37,7 @@ await soniq.run_worker(
 | `concurrency` | `int` | `4` | Number of concurrent asyncio tasks fetching and executing jobs. |
 | `run_once` | `bool` | `False` | Process all available jobs and exit. Useful for testing and cron-driven setups. |
 | `queues` | `list[str] \| None` | `None` | Restrict to these queue names. `None` means process all queues. This is the in-process default; the `soniq worker` CLI also defaults to all queues when `--queues` is omitted. |
+| `shutdown_event` | `asyncio.Event \| None` | `None` | Set it to shut the worker down and drain in-flight jobs. When you pass one, the worker installs no signal handlers. |
 
 ### What happens during run_worker
 
@@ -57,7 +60,7 @@ settings:
 | `SONIQ_HEARTBEAT_TIMEOUT` | `300.0` | Seconds after which a worker with no heartbeat is considered stale. |
 | `SONIQ_CLEANUP_INTERVAL` | `300.0` | Seconds between expired-job and stale-worker cleanup runs. |
 | `SONIQ_ERROR_RETRY_DELAY` | `5.0` | Seconds to sleep after an unexpected worker-level error before resuming. |
-| `SONIQ_JOBS_MODULES` | (empty) | Comma-separated list of modules to import on worker startup. Required by the CLI. See [Job module discovery](../getting-started/installation.md#job-module-discovery). |
+| `SONIQ_JOBS_MODULES` | (empty) | Comma-separated list of modules to import on worker startup. Required by the CLI unless you pass an app path (`soniq worker myapp.jobs:soniq`), which is imported for you. See [Job module discovery](../getting-started/installation.md#job-module-discovery). |
 
 !!! note "Queue selection"
     The `soniq worker` CLI worker processes **all queues** when `--queues` is not passed.
@@ -72,7 +75,7 @@ Most users never instantiate `Worker` directly. It is documented here for
 contributors and users who need fine-grained control.
 
 ```python
-from soniq.worker import Worker
+from soniq.core.worker import Worker
 from soniq.core.registry import JobRegistry
 from soniq.settings import SoniqSettings
 
@@ -125,10 +128,11 @@ processed in one call.
 In continuous mode, the worker installs signal handlers for `SIGINT` and `SIGTERM`.
 On receiving either signal:
 
-1. The shutdown event is set.
-2. Running job tasks are cancelled.
-3. The worker deregisters itself from the database.
-4. The `LISTEN/NOTIFY` connection is released.
+1. The shutdown event is set and the worker stops taking new jobs.
+2. Running jobs get up to `shutdown_timeout` seconds (default 30) to finish.
+3. Async jobs still running after that are cancelled and put back in the queue with their attempt count kept. Sync handlers are not cancelled; the worker waits for the thread.
+4. The worker deregisters itself from the database.
+5. The `LISTEN/NOTIFY` connection is released.
 
 A second signal during shutdown forces an immediate exit.
 

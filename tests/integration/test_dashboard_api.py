@@ -94,4 +94,55 @@ async def test_panels_endpoints_work_without_sql(app):
         assert resp.json() == []
 
         resp = await client.get("/api/panels/does-not-exist")
-        assert resp.status_code == 200
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_api_key_lets_html_page_and_preflight_through_under_a_prefix(
+    app, monkeypatch
+):
+    httpx = pytest.importorskip("httpx")
+    monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", "secret")
+
+    fastapi_app = create_dashboard_app(app)
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get("/")).status_code == 200
+        assert (await client.get("/api/panels")).status_code == 401
+        assert (
+            await client.get("/api/panels", headers={"X-API-Key": "secret"})
+        ).status_code == 200
+        assert (await client.options("/api/panels")).status_code != 401
+
+    mounted = httpx.ASGITransport(app=fastapi_app, root_path="/admin")
+    async with httpx.AsyncClient(transport=mounted, base_url="http://test") as client:
+        assert (await client.get("/admin/")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/jobs?limit=-1",
+        "/api/jobs/search?offset=-5",
+        "/api/dead-letter?limit=-1",
+        "/api/metrics?hours=99999999999",
+        "/api/jobs/timeline?hours=0",
+    ],
+)
+async def test_bad_paging_and_window_values_are_rejected(app, path):
+    httpx = pytest.importorskip("httpx")
+
+    transport = httpx.ASGITransport(app=create_dashboard_app(app))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get(path)).status_code == 422
+
+
+def test_can_write_needs_both_env_vars(monkeypatch):
+    from soniq.dashboard.server import get_dashboard_html
+
+    monkeypatch.setenv("SONIQ_DASHBOARD_WRITE_ENABLED", "true")
+    monkeypatch.delenv("SONIQ_DASHBOARD_API_KEY", raising=False)
+    without_key = get_dashboard_html()
+    monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", "k")
+    assert get_dashboard_html() != without_key

@@ -47,18 +47,73 @@ One row per job.
 | `worker_id` | `uuid` | The worker running it, from `soniq_workers`. Set by the worker. Leave it `NULL`. |
 | `created_at`, `updated_at` | `timestamptz` | Bookkeeping. Let them default. |
 
-Every timestamp column is `timestamp with time zone`. Write times with an explicit offset, or use `NOW()`.
+Every timestamp column is `timestamp with time zone`. Write times with an explicit offset, or use `NOW()`. The database must use UTF8 encoding, the Postgres default.
 
-To enqueue from another language, insert a row with `status = 'queued'` and let the rest default:
+To enqueue from another language, see [Enqueue from any language](#enqueue-from-any-language).
+
+A failed job doesn't get a status of its own. It goes back to `queued` with a later `scheduled_at` until it runs out of attempts. Then it moves to `soniq_dead_letter_jobs`.
+
+## Enqueue from any language
+
+Call `soniq_enqueue()`. It is a plain SQL function, so any Postgres driver can call it, and it does what Python's `enqueue` does: it checks the job name and args, computes `args_hash` for unique jobs, returns the id of a queued duplicate instead of failing, and wakes idle workers.
+
+```sql
+SELECT soniq_enqueue('billing.send_invoice', '{"order_id": 123}');
+
+-- Every option, by name. Leave out what you don't need.
+SELECT soniq_enqueue(
+  'billing.send_invoice', '{"order_id": 123}',
+  queue        => 'billing',
+  priority     => 10,                          -- lower runs first, default 100
+  run_at       => now() + interval '1 hour',   -- default: now
+  max_attempts => 4,                           -- retries plus one, default 4
+  unique_job   => true,
+  dedup_key    => 'invoice-123',
+  producer_id  => 'checkout-go',               -- default: application_name
+  job_id       => '6f1c...'::uuid              -- default: a random UUID
+);
+```
+
+It returns the job's id. Call it inside your own transaction and the job exists only if that transaction commits. Workers are woken at commit, so a rollback wakes nobody.
+
+The handler's decorator settings don't apply here. A job enqueued from SQL gets the `queue`, `priority` and `max_attempts` you pass, or the defaults above, not the `queue=` or `retries=` on `@soniq.job()`. The same goes for `unique=`: pass `unique_job => true` yourself.
+
+Bad input raises SQLSTATE `22023`, with the Soniq error code in the error's `HINT`: `SONIQ_INVALID_TASK_NAME` for a name that doesn't match the pattern, `SONIQ_TASK_ARGS_INVALID` for args that aren't a JSON object. A `job_id` that already exists raises `23505`.
+
+Job names are checked against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`. If your Python side sets a different `task_name_pattern`, set the same one for the database:
+
+```sql
+ALTER DATABASE myapp SET soniq.task_name_pattern = '^[a-z][a-z0-9_.-]*$';
+```
+
+### Read a job back
+
+```sql
+SELECT status, result, last_error FROM soniq_get_job('6f1c...'::uuid);
+```
+
+It returns these columns: `id`, `job_name`, `status`, `queue`, `attempts`, `max_attempts`, `result`, `last_error`, `dead_letter_reason`, `scheduled_at`, `created_at` and `updated_at`. A job that failed for good comes back with status `dead_letter`. No row means the id is unknown, or the job finished and its result expired after `result_ttl`.
+
+### Permissions
+
+Both functions run with their owner's rights, so a service account needs no access to the tables. They are not callable by everyone by default. Grant them to each producer:
+
+```sql
+GRANT USAGE ON SCHEMA public TO checkout_service;
+GRANT EXECUTE ON FUNCTION soniq_enqueue, soniq_get_job TO checkout_service;
+```
+
+### Raw INSERT
+
+If you can't call a function, insert the row yourself:
 
 ```sql
 INSERT INTO soniq_jobs (id, job_name, args, status, queue, max_attempts)
-VALUES (gen_random_uuid(), 'billing.send_invoice', '{"order_id": 123}', 'queued', 'default', 3);
+VALUES (gen_random_uuid(), 'billing.send_invoice', '{"order_id": 123}', 'queued', 'default', 4);
+SELECT pg_notify('soniq_new_job', 'default');
 ```
 
-Do this inside your own transaction and the job exists only if that transaction commits.
-
-A failed job doesn't get a status of its own. It goes back to `queued` with a later `scheduled_at` until it runs out of attempts. Then it moves to `soniq_dead_letter_jobs`.
+The `pg_notify` wakes idle workers. Without it they still find the job on their next poll, within `poll_interval` (5 seconds by default). You check the name and args yourself, and for a unique job you compute [`args_hash`](#args_hash) and handle the conflict.
 
 ## `soniq_dead_letter_jobs`
 
@@ -131,13 +186,15 @@ canonical: {"order_id":42,"tags":["a","b"],"to":"zo\u00eb@example.com"}
 args_hash: 4679a46d38de4bf4d70793166c09d90fb32fa2f36cac5f9193000b4e17bc2c9c
 ```
 
+`soniq_args_hash(args jsonb)` in the database computes the same hash, so you can check your own implementation against it.
+
 Floats are the weak spot. Languages don't agree on how to print them (`1.0` or `1`, `1e+16` or `10000000000000000.0`), so two producers can hash the same value differently. Keep floats out of the args of unique jobs, or send them as strings.
 
 ## Not language neutral yet
 
 These parts still assume Python on both ends:
 
-- **Running jobs.** Only Soniq's Python worker claims and runs jobs. The claim protocol isn't documented for other workers yet.
+- **Running jobs.** Only Soniq's Python worker claims and runs jobs. The claim protocol isn't documented for other workers yet. Workers `LISTEN` for new jobs, which needs a session-mode connection if they go through PgBouncer.
 - **`last_error`.** It's text meant for people, often a Python traceback. Don't parse it.
 - **Webhook secrets** in the webhook tables are encrypted with a Python library.
 - **`soniq_task_registry.args_model_repr`** is a Python `repr`.

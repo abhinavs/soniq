@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, HTTPException, Query, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import HTMLResponse
 
@@ -49,7 +49,7 @@ def _require_write_authorization(request: "Request") -> None:
             status_code=403,
             detail=(
                 "Dashboard writes are disabled. Set "
-                "SONIQ_DASHBOARD_WRITE_ENABLED=true to enable retry/cancel/delete."
+                "SONIQ_DASHBOARD_WRITE_ENABLED=true to enable replay/cancel/delete."
             ),
         )
 
@@ -120,8 +120,14 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
         class APIKeyMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
-                # Allow the root page without auth for the HTML dashboard
-                if request.url.path == "/":
+                # Let the HTML page and CORS preflights through without the
+                # key. When mounted under a prefix the page is "/" relative
+                # to the mount, so strip root_path before comparing.
+                root = request.scope.get("root_path", "")
+                path = request.url.path
+                if root and path.startswith(root):
+                    path = path[len(root) :]
+                if path in ("", "/") or request.method == "OPTIONS":
                     return await call_next(request)
                 key = request.headers.get("X-API-Key") or request.query_params.get(
                     "api_key"
@@ -147,7 +153,7 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
     @app.get("/api/jobs")
     async def api_recent_jobs(
-        limit: int = 50, queue: Optional[str] = None
+        limit: int = Query(50, ge=1, le=1000), queue: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get recent jobs"""
         return await data.get_recent_jobs(limit=limit, queue=queue)
@@ -158,7 +164,7 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         return await data.get_queue_stats()
 
     @app.get("/api/metrics")
-    async def api_job_metrics(hours: int = 24) -> Dict[str, Any]:
+    async def api_job_metrics(hours: int = Query(24, ge=1, le=8760)) -> Dict[str, Any]:
         """Get job processing metrics"""
         return await data.get_job_metrics(hours=hours)
 
@@ -199,7 +205,9 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         return {"message": "Job cancelled"}
 
     @app.get("/api/dead-letter")
-    async def api_dead_letter_jobs(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    async def api_dead_letter_jobs(
+        limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0)
+    ) -> Dict[str, Any]:
         """Dead-letter jobs, newest first"""
         return await data.get_dead_letter_jobs(limit=limit, offset=offset)
 
@@ -214,7 +222,9 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         return await data.get_worker_stats()
 
     @app.get("/api/jobs/timeline")
-    async def api_job_timeline(hours: int = 24) -> List[Dict[str, Any]]:
+    async def api_job_timeline(
+        hours: int = Query(24, ge=1, le=8760)
+    ) -> List[Dict[str, Any]]:
         """Get job processing timeline for visualization"""
         return await data.get_job_timeline(hours=hours)
 
@@ -229,8 +239,8 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         status: Optional[str] = None,
         queue: Optional[str] = None,
         job_name: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
     ) -> Dict[str, Any]:
         """Search and filter jobs with pagination"""
         return await data.search_jobs(
@@ -257,7 +267,7 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
     @app.get("/api/tasks/drift")
     async def api_task_registry_drift(
-        window_minutes: int = 60,
+        window_minutes: int = Query(60, ge=1, le=10080),
     ) -> Dict[str, Any]:
         """Names with recent queued / dead-letter rows that no worker has
         registered. Surfaces deploy-skew between producer and consumer
@@ -285,17 +295,24 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
                     "title": panel.title,
                     "content": content,
                 }
-        return {"error": f"Panel {panel_id!r} not registered"}
+        raise HTTPException(
+            status_code=404, detail=f"Panel {panel_id!r} not registered"
+        )
 
     return app
 
 
 def get_dashboard_html() -> str:
     """The dashboard page, with the write flag filled in."""
+    # Keep the UI in sync with the server-side mutating-endpoint gate.
+    import os
     from importlib.resources import files
 
-    # Keep the UI in sync with the server-side mutating-endpoint gate.
-    can_write = "true" if _is_dashboard_write_enabled() else "false"
+    can_write = (
+        "true"
+        if _is_dashboard_write_enabled() and os.environ.get("SONIQ_DASHBOARD_API_KEY")
+        else "false"
+    )
     html = files("soniq.dashboard").joinpath("index.html").read_text("utf-8")
     return html.replace("__SONIQ_CAN_WRITE__", can_write)
 

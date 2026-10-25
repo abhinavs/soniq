@@ -201,12 +201,12 @@ app.conf.beat_schedule = {
 
 ```python
 # after
-@soniq.periodic(cron="0 * * * *")
+@soniq.periodic(cron="0 * * * *", name="reports.hourly_rollup")
 async def rollup():
     ...
 
 # also valid:
-@soniq.periodic(every=timedelta(minutes=15))
+@soniq.periodic(every=timedelta(minutes=15), name="cache.warm_caches")
 async def warm_caches():
     ...
 ```

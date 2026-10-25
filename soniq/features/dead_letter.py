@@ -36,6 +36,15 @@ class DeadLetterReason(str, Enum):
     MANUAL_MOVE = "manual_move"
 
 
+def _tags(value: Any) -> Optional[Dict[str, str]]:
+    """Tags as a dict. Soniq 0.1.0 stored some as a JSON string inside the
+    JSONB (encoded twice); migration 0006 fixes those rows, but a 0.1.0
+    worker still running can write more."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value  # type: ignore[no-any-return]
+
+
 @dataclass
 class DeadLetterJob:
     """Dead letter job record"""
@@ -364,7 +373,7 @@ class DeadLetterService:
                     moved_to_dead_letter_at=record["moved_to_dead_letter_at"],
                     resurrection_count=record["resurrection_count"],
                     last_resurrection_at=record["last_resurrection_at"],
-                    tags=record["tags"],
+                    tags=_tags(record["tags"]),
                 )
                 dead_jobs.append(dead_job)
 
@@ -400,7 +409,7 @@ class DeadLetterService:
                 moved_to_dead_letter_at=record["moved_to_dead_letter_at"],
                 resurrection_count=record["resurrection_count"],
                 last_resurrection_at=record["last_resurrection_at"],
-                tags=record["tags"],
+                tags=_tags(record["tags"]),
             )
 
     async def get_dead_letter_stats(
@@ -560,7 +569,7 @@ class DeadLetterService:
                 uuid.UUID(dead_letter_id),
             )
 
-            # JSONB codec returns a dict/None directly.
+            current_tags = _tags(current_tags)
             if current_tags:
                 current_tags.update(tags)
             else:

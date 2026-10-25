@@ -34,6 +34,12 @@ def add_dashboard_cmd(subparsers) -> None:
 
 
 async def handle_dashboard(args) -> int:
+    from soniq import DASHBOARD_AVAILABLE
+
+    if not DASHBOARD_AVAILABLE:
+        print("Dashboard is not available. Install with: pip install soniq[dashboard]")
+        return 1
+
     # The dashboard exposes dead-letter replay, which re-inserts a soniq_jobs
     # row and needs the target job's registration to resolve max_attempts. Run
     # on the job-module instance (same reason worker/scheduler do) so that path
@@ -67,14 +73,6 @@ async def handle_dashboard(args) -> int:
         ctx = cli_app(args)
 
     async with ctx as app:
-        from soniq import DASHBOARD_AVAILABLE
-
-        if not DASHBOARD_AVAILABLE:
-            print(
-                "Dashboard is not available. Install with: pip install soniq[dashboard]"
-            )
-            return 1
-
         from soniq.dashboard.server import run_dashboard
 
         rc = await run_dashboard(soniq_app=app, host=args.host, port=args.port)

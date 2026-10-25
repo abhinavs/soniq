@@ -399,6 +399,8 @@ class Soniq:
         # to this Soniq instance, not a global cache.
         route_map = dict(self._settings.route_map or {})
         task_name_pattern = self._settings.task_name_pattern
+        # periodic() reports a missing name= itself, pointing at the user's code.
+        from_periodic = kwargs.pop("_from_periodic", False)
 
         def decorator(
             func: Callable[_JP, Awaitable[_JR]],
@@ -410,7 +412,7 @@ class Soniq:
                 _soniq=self,
                 **kwargs,
             )
-            if kwargs.get("name") is None:
+            if kwargs.get("name") is None and not from_periodic:
                 # The derived name is a Python module path, which only Python
                 # code can produce. Rows should carry a name any language can.
                 derived: str = getattr(wrapper, "_soniq_name")
@@ -487,7 +489,16 @@ class Soniq:
         sched_args = job_kwargs.pop("schedule_args", None)
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            wrapped: Any = self.job(**job_kwargs)(func)
+            wrapped: Any = self.job(_from_periodic=True, **job_kwargs)(func)
+            if job_kwargs.get("name") is None:
+                derived: str = getattr(wrapped, "_soniq_name")
+                warn_deprecated(
+                    f"Deriving the periodic job name {derived!r} from the module path",
+                    since="0.2.0",
+                    removed_in="1.0",
+                    use_instead=f"@soniq.periodic(..., name={derived!r})",
+                    stacklevel=3,
+                )
             retries = job_kwargs.get("retries")
             wrapped._soniq_periodic = {
                 "cron": schedule_value if schedule_type == "cron" else None,
@@ -777,16 +788,7 @@ class Soniq:
             producer_id=producer_id,
         )
 
-        if self._backend.supports_push_notify:
-            try:
-                await self._backend.notify_new_job(final_queue)
-            except Exception:
-                logger.debug(
-                    "notify_new_job failed for queue %s; workers will pick up via poll",
-                    final_queue,
-                    exc_info=True,
-                )
-
+        # No notify here: create_job already sent one with the insert.
         return result_id or job_id
 
     async def enqueue_many(

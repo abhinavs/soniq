@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -20,13 +21,42 @@ from ...core.leadership import advisory_key
 
 logger = logging.getLogger(__name__)
 
+_INSERT_JOB_SQL = """
+    INSERT INTO soniq_jobs
+        (id, job_name, args, args_hash, max_attempts, priority, queue,
+         unique_job, dedup_key, scheduled_at, producer_id)
+    VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11)
+"""
+# No conflict target, so a clash on either the dedup index or the unique
+# index counts. The existing queued row is then looked up by
+# _FIND_DUPLICATE_SQL. If a worker claims it in between, insert again.
+_ON_CONFLICT_SQL = " ON CONFLICT DO NOTHING RETURNING id"
+_FIND_DUPLICATE_SQL = """
+    SELECT id FROM soniq_jobs
+    WHERE status = 'queued'
+      AND (dedup_key = $1
+           OR ($2 AND unique_job AND job_name = $3 AND args_hash = $4))
+    LIMIT 1
+"""
+_DEDUP_ATTEMPTS = 3
+# psycopg takes %s placeholders instead of $n.
+_PSYCOPG_INSERT_JOB_SQL = re.sub(r"\$\d+", "%s", _INSERT_JOB_SQL)
+_PSYCOPG_FIND_DUPLICATE_SQL = re.sub(r"\$\d+", "%s", _FIND_DUPLICATE_SQL)
+
+
+def _pool_json(value: Any) -> str:
+    """JSONB encoder for connections in Soniq's pool. Same as 0.1.0, so code
+    that writes its own JSONB through ``soniq.backend.acquire()`` keeps working.
+    Soniq's own args and results are checked as strict JSON before they get here."""
+    return json.dumps(value, default=str)
+
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
     """Set UTC timezone and register a JSONB codec so args/result are native Python dicts, not raw strings."""
     await conn.execute("SET timezone = 'UTC'")
     await conn.set_type_codec(
         "jsonb",
-        encoder=to_json,
+        encoder=_pool_json,
         decoder=json.loads,
         schema="pg_catalog",
     )
@@ -231,81 +261,10 @@ class PostgresBackend:
         uid = uuid.UUID(job_id)
         # Send args as JSON text with an explicit cast. The connection may come
         # from the caller (their own pool, an ORM session) without Soniq's JSONB
-        # codec, so this must not depend on the codec. Same encoding as the codec.
+        # codec, so this must not depend on the codec. Args are always strict JSON.
         args_json = to_json(args)
 
-        # ON CONFLICT DO UPDATE SET (no-op) RETURNING id fires for the existing row too,
-        # so the returned id is always a real row - no caller-id can leak through a race window.
-        if dedup_key:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO soniq_jobs
-                    (id, job_name, args, args_hash, max_attempts, priority, queue,
-                     unique_job, dedup_key, scheduled_at, producer_id)
-                VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11)
-                ON CONFLICT (dedup_key)
-                    WHERE status = 'queued' AND dedup_key IS NOT NULL
-                DO UPDATE SET dedup_key = EXCLUDED.dedup_key
-                RETURNING id
-                """,
-                uid,
-                job_name,
-                args_json,
-                args_hash,
-                max_attempts,
-                priority,
-                queue,
-                unique,
-                dedup_key,
-                scheduled_at,
-                producer_id,
-            )
-            assert row is not None
-            await conn.execute(
-                "SELECT pg_notify($1, $2)",
-                "soniq_new_job",
-                queue,
-            )
-            return str(row["id"])
-
-        if unique:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO soniq_jobs
-                    (id, job_name, args, args_hash, max_attempts, priority, queue,
-                     unique_job, scheduled_at, producer_id)
-                VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10)
-                ON CONFLICT (job_name, args_hash)
-                    WHERE status = 'queued' AND unique_job = TRUE
-                DO UPDATE SET unique_job = EXCLUDED.unique_job
-                RETURNING id
-                """,
-                uid,
-                job_name,
-                args_json,
-                args_hash,
-                max_attempts,
-                priority,
-                queue,
-                True,
-                scheduled_at,
-                producer_id,
-            )
-            assert row is not None
-            await conn.execute(
-                "SELECT pg_notify($1, $2)",
-                "soniq_new_job",
-                queue,
-            )
-            return str(row["id"])
-
-        await conn.execute(
-            """
-            INSERT INTO soniq_jobs
-                (id, job_name, args, args_hash, max_attempts, priority, queue,
-                 unique_job, scheduled_at, producer_id)
-            VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10)
-            """,
+        params = (
             uid,
             job_name,
             args_json,
@@ -314,15 +273,29 @@ class PostgresBackend:
             priority,
             queue,
             unique,
+            dedup_key,
             scheduled_at,
             producer_id,
         )
-        await conn.execute(
-            "SELECT pg_notify($1, $2)",
-            "soniq_new_job",
-            queue,
-        )
-        return job_id
+        if not (unique or dedup_key):
+            await conn.execute(_INSERT_JOB_SQL, *params)
+            result_id = job_id
+        else:
+            for _ in range(_DEDUP_ATTEMPTS):
+                row = await conn.fetchrow(_INSERT_JOB_SQL + _ON_CONFLICT_SQL, *params)
+                if row is None:
+                    row = await conn.fetchrow(
+                        _FIND_DUPLICATE_SQL, dedup_key, unique, job_name, args_hash
+                    )
+                if row is not None:
+                    break
+            else:
+                raise RuntimeError(
+                    f"Could not enqueue or find a duplicate of {job_name}"
+                )
+            result_id = str(row["id"])
+        await conn.execute("SELECT pg_notify($1, $2)", "soniq_new_job", queue)
+        return result_id
 
     async def _create_job_on_psycopg(
         self,
@@ -343,11 +316,7 @@ class PostgresBackend:
         """Same inserts as ``_create_job_on_conn`` for a psycopg 3 AsyncConnection."""
         uid = uuid.UUID(job_id)
         args_json = to_json(args)
-        cols = (
-            "id, job_name, args, args_hash, max_attempts, priority, queue, unique_job"
-        )
-        vals = "%s, %s, %s::text::jsonb, %s, %s, %s, %s, %s"
-        params: list[Any] = [
+        params = (
             uid,
             job_name,
             args_json,
@@ -356,37 +325,35 @@ class PostgresBackend:
             priority,
             queue,
             unique,
-        ]
-        if dedup_key:
-            cols += ", dedup_key"
-            vals += ", %s"
-            params.append(dedup_key)
-            tail = (
-                " ON CONFLICT (dedup_key) WHERE status = 'queued' AND dedup_key IS NOT NULL"
-                " DO UPDATE SET dedup_key = EXCLUDED.dedup_key RETURNING id"
-            )
-        elif unique:
-            params[7] = True
-            tail = (
-                " ON CONFLICT (job_name, args_hash) WHERE status = 'queued' AND unique_job = TRUE"
-                " DO UPDATE SET unique_job = EXCLUDED.unique_job RETURNING id"
-            )
-        else:
-            tail = ""
-        cols += ", scheduled_at, producer_id"
-        vals += ", %s, %s"
-        params += [scheduled_at, producer_id]
-
+            dedup_key,
+            scheduled_at,
+            producer_id,
+        )
+        result_id: Optional[str] = job_id
         async with conn.cursor() as cur:
-            await cur.execute(
-                f"INSERT INTO soniq_jobs ({cols}) VALUES ({vals}){tail}", params
-            )
-            row = await cur.fetchone() if tail else None
+            if not (unique or dedup_key):
+                await cur.execute(_PSYCOPG_INSERT_JOB_SQL, params)
+            else:
+                for _ in range(_DEDUP_ATTEMPTS):
+                    await cur.execute(
+                        _PSYCOPG_INSERT_JOB_SQL + _ON_CONFLICT_SQL, params
+                    )
+                    row = await cur.fetchone()
+                    if row is None:
+                        await cur.execute(
+                            _PSYCOPG_FIND_DUPLICATE_SQL,
+                            (dedup_key, unique, job_name, args_hash),
+                        )
+                        row = await cur.fetchone()
+                    if row is not None:
+                        break
+                else:
+                    raise RuntimeError(
+                        f"Could not enqueue or find a duplicate of {job_name}"
+                    )
+                result_id = str(row[0])
             await cur.execute("SELECT pg_notify(%s, %s)", ("soniq_new_job", queue))
-        if tail:
-            assert row is not None
-            return str(row[0])
-        return job_id
+        return result_id
 
     async def create_jobs_bulk(
         self,
@@ -659,7 +626,12 @@ class PostgresBackend:
                     row["args"],
                     row["queue"],
                     row["priority"],
-                    row["max_attempts"],
+                    # The dead-letter column is NOT NULL.
+                    (
+                        row["max_attempts"]
+                        if row["max_attempts"] is not None
+                        else attempts
+                    ),
                     attempts,
                     error,
                     reason,

@@ -76,6 +76,19 @@ def test_derived_job_name_warns_and_explicit_name_does_not():
             pass
 
 
+def test_nameless_periodic_job_warns_once_from_the_users_file():
+    app = Soniq(backend="memory")
+
+    with pytest.warns(SoniqDeprecationWarning, match="periodic") as caught:
+
+        @app.periodic(every=60)
+        async def derived_periodic_job():
+            pass
+
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+
+
 def test_args_hash_matches_the_documented_vector():
     # Keep in sync with docs/reference/storage-format.md.
     args = {"to": "zoë@example.com", "order_id": 42, "tags": ["a", "b"]}

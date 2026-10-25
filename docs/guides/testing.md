@@ -25,6 +25,14 @@ pytest_plugins = ["soniq.testing.pytest_plugin"]
 
 You can also run `pytest -p soniq.testing.pytest_plugin`.
 
+Also turn on `asyncio_mode = "auto"` so your async tests run without a marker on each one:
+
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+```
+
 The plugin gives you two fixtures:
 
 - `soniq_memory`: a `Soniq` on the in-memory backend.
@@ -49,7 +57,7 @@ async def test_welcome_email(soniq_memory):
 
 The marker also points your instance's `enqueue` and `enqueue_many` at the fixture for the length of the test. So `send_email.enqueue(...)`, and app code that calls `soniq.enqueue(...)` on your module-level instance, put jobs in the fixture's queue and not in your real database.
 
-The async tests need `pytest-asyncio`. Either set `asyncio_mode = "auto"` in your pytest config or mark each test with `@pytest.mark.asyncio`. Without one of them, pytest skips the async tests instead of running them.
+The async tests need `pytest-asyncio`. Either set `asyncio_mode = "auto"` in your pytest config or mark each test with `@pytest.mark.asyncio`. Without one of them, pytest fails each async test with "async def functions are not natively supported" (pytest-asyncio's default `strict` mode only runs tests that are marked).
 
 ## Memory backend for unit tests
 
@@ -167,7 +175,7 @@ Enqueue a job that raises, then call `run_worker(run_once=True)` multiple times:
 async def test_retry_behavior(soniq):
     attempts = []
 
-    @soniq.job(name="jobs.flaky_job", max_retries=2, retry_delay=0)
+    @soniq.job(name="jobs.flaky_job", retries=2, retry_delay=0)
     async def flaky_job():
         attempts.append(1)
         if len(attempts) < 3:

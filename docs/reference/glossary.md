@@ -12,7 +12,7 @@ The Python function that runs when a job is processed. Registered via `@soniq.jo
 
 ## Task name
 
-The string identifier under which a handler is registered. By default Soniq derives it from `f"{module}.{qualname}"` (Celery-style). Override with `@soniq.job(name="...")`. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
+The string identifier under which a handler is registered. Set it with `@soniq.job(name="...")`. Without `name=`, Soniq derives `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
 
 ## TaskRef
 
@@ -32,7 +32,7 @@ A `varchar` column on `soniq_jobs` used for routing. Workers can be started with
 
 ## Concurrency
 
-The number of in-flight jobs a single worker process will run at once. Default is 4. Tune up for I/O-bound workloads, down for CPU-bound. Set with `--concurrency` or `SONIQ_WORKER_CONCURRENCY`.
+The number of in-flight jobs a single worker process will run at once. Default is 4. Tune up for I/O-bound workloads, down for CPU-bound. Set with `--concurrency` or `SONIQ_CONCURRENCY`.
 
 ## Heartbeat
 

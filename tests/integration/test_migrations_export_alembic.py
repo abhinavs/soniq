@@ -56,7 +56,7 @@ def test_alembic_revision_applies_and_setup_is_noop(tmp_path):
                 """
             )
         )
-        (tmp_path / "versions" / "soniq_0005.py").write_text(_export("--alembic"))
+        (tmp_path / "versions" / "soniq_0006.py").write_text(_export("--alembic"))
 
         cfg = Config()
         cfg.set_main_option("script_location", str(tmp_path))

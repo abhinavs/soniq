@@ -28,12 +28,16 @@ from soniq import Soniq
 
 soniq = Soniq()
 
-@soniq.job(name="send_welcome")
+@soniq.job(name="emails.send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
+    async def main():
+        await soniq.enqueue(send_welcome, to="dev@example.com")
+        await soniq.close()
+
+    asyncio.run(main())
 ```
 
 ```bash

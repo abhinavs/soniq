@@ -32,12 +32,16 @@ from soniq import Soniq
 
 soniq = Soniq()
 
-@soniq.job(name="send_welcome")
+@soniq.job(name="emails.send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
+    async def main():
+        await soniq.enqueue(send_welcome, to="dev@example.com")
+        await soniq.close()
+
+    asyncio.run(main())
 ```
 
 The job has an explicit `name`. When you run `python jobs.py`, Python calls the file `__main__`. Without a fixed name, the job would be stored as `__main__.send_welcome`, and the worker (which imports the file as `jobs`) could not find it.
@@ -78,7 +82,7 @@ The code above works, but you will want to tighten a few things before deploying
 - **Set `SONIQ_JOBS_MODULES`** so workers can import your job functions on startup.
 - **Run `soniq setup` only once per deploy**, not from every replica's startup. See [going to production](production/going-to-production.md).
 - **Make handlers idempotent** - meaning safe to run more than once with the same end result. Soniq guarantees *at-least-once* delivery: if a worker crashes after running your function but before marking the job done, the job will run again on another worker. This is normal for every job queue. The fix is to design your handler so a re-run is harmless: use database upserts (`INSERT ... ON CONFLICT DO UPDATE`) instead of plain inserts, check whether you already sent the email before sending it again, or store an idempotency token alongside the side effect.
-- **Tune timeouts.** Every job has a default 300-second timeout. Override per-job with `@soniq.job(timeout=600)`.
+- **Tune timeouts.** Every job has a default 300-second timeout. Override per-job with `@soniq.job(name="reports.build", timeout=600)`.
 
 ## Where to go next
 

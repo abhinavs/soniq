@@ -268,6 +268,12 @@ async def process_job_via_backend(
     job_name = job_record["job_name"]
     max_attempts = job_record["max_attempts"]
     attempts = job_record["attempts"]
+    if max_attempts is None:
+        # NULL means "use the handler's retries". Soniq doesn't write it yet;
+        # accepting it now lets a later version start writing it safely.
+        meta = job_registry.get_job(job_name)
+        retries = meta["max_retries"] if meta else settings.max_retries
+        max_attempts = job_record["max_attempts"] = retries + 1
 
     start_time = time.time()
     logger.info(

@@ -109,7 +109,7 @@ def make_dead_letters(ctx, n):
 
 
 def test_setup_with_env_url(ctx):
-    soniq_cmd(ctx, "setup", expect=["Found 5 core migrations", "Applying"])
+    soniq_cmd(ctx, "setup", expect=["Found 6 core migrations", "Applying"])
 
 
 def test_setup_with_database_url_flag(ctx):

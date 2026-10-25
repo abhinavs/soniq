@@ -40,7 +40,7 @@ async def before_job_hook(job_name: str, job_id: str, attempt: int) -> None
 
 | Argument | Type | Description |
 |---|---|---|
-| `job_name` | `str` | Fully qualified job name (`module.function`). |
+| `job_name` | `str` | The registered job name (the `name=` you gave the decorator). |
 | `job_id` | `str` | UUID of the job. |
 | `attempt` | `int` | Current attempt number. |
 
@@ -54,7 +54,7 @@ async def after_job_hook(job_name: str, job_id: str, duration_ms: float) -> None
 
 | Argument | Type | Description |
 |---|---|---|
-| `job_name` | `str` | Fully qualified job name. |
+| `job_name` | `str` | The registered job name. |
 | `job_id` | `str` | UUID of the job. |
 | `duration_ms` | `float` | Wall-clock execution time in milliseconds. |
 
@@ -68,7 +68,7 @@ async def on_error_hook(job_name: str, job_id: str, error: str, attempt: int) ->
 
 | Argument | Type | Description |
 |---|---|---|
-| `job_name` | `str` | Fully qualified job name. |
+| `job_name` | `str` | The registered job name. |
 | `job_id` | `str` | UUID of the job. |
 | `error` | `str` | String representation of the exception. |
 | `attempt` | `int` | The attempt number that failed. |
