@@ -26,13 +26,21 @@ def test_to_json_rejects_objects_and_nan():
             to_json({"n": bad})
 
 
+def test_to_json_rejects_what_postgres_cannot_store():
+    for bad in ({"s": "a\x00b"}, {"a\x00": 1}, {"s": "\ud800"}):
+        with pytest.raises(ValueError):
+            to_json(bad)
+    # A backslash followed by u0000 is ordinary text.
+    assert to_json({"s": "\\u0000"}) == '{"s": "\\\\u0000"}'
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad", [math.nan, math.inf])
+@pytest.mark.parametrize("bad", [math.nan, math.inf, "a\x00b", "\ud800"])
 async def test_enqueue_rejects_nan_and_infinity(bad):
     app = Soniq(backend="memory")
 
     @app.job(name="format.number")
-    async def handler(n: float):
+    async def handler(n):
         pass
 
     with pytest.raises(SoniqError) as exc:
@@ -57,6 +65,42 @@ async def test_non_json_result_is_stored_as_null(caplog):
     assert job["result"] is None
     assert "returned a datetime" in caplog.text
     await app.close()
+
+
+@pytest.mark.asyncio
+async def test_unstorable_result_and_error_text(caplog):
+    app = Soniq(backend="memory")
+
+    @app.job(name="format.surrogate")
+    async def surrogate():
+        return {"s": "\ud800"}
+
+    @app.job(name="format.nul_error", retries=0)
+    async def nul_error():
+        raise RuntimeError("bad\x00byte \udcff")
+
+    ok_id = await app.enqueue(surrogate)
+    bad_id = await app.enqueue(nul_error)
+    with caplog.at_level(logging.ERROR):
+        await drain(app)
+
+    assert (await app.get_job(ok_id))["result"] is None
+    assert "can't be stored" in caplog.text
+    dead = await app.get_job(bad_id)
+    assert dead["status"] == "dead_letter"
+    assert "\x00" not in dead["last_error"]
+    dead["last_error"].encode("utf-8")
+    await app.close()
+
+
+def test_derived_name_that_fails_the_pattern_says_what_to_do():
+    app = Soniq(backend="memory")
+
+    def sendEmail():
+        pass
+
+    with pytest.warns(SoniqDeprecationWarning, match="SONIQ_TASK_NAME_PATTERN"):
+        app.job()(sendEmail)
 
 
 def test_derived_job_name_warns_and_explicit_name_does_not():

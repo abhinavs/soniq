@@ -149,6 +149,32 @@ async def test_metrics_and_timeline_count_finished_jobs_only(app):
 
 
 @pytest.mark.asyncio
+async def test_replayed_dead_letter_rows_are_not_counted_again(app):
+    # The replay is a new job. Once it finishes it counts on its own, so the
+    # old dead-letter row must stop counting as a failure.
+    dlq_id = await _seed_dlq_row(app)
+    pool = await app._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE soniq_dead_letter_jobs SET resurrection_count = 1" " WHERE id = $1",
+            uuid.UUID(dlq_id),
+        )
+        await conn.execute(
+            "INSERT INTO soniq_jobs (id, job_name, args, status) "
+            "VALUES ($1, 'test.dlq', '{}', 'done')",
+            uuid.uuid4(),
+        )
+
+    data = DashboardService(app)
+    metrics = await data.get_job_metrics(hours=24)
+    assert metrics["dead_lettered"] == 0
+    assert metrics["total_processed"] == 1
+    health = await data.get_system_health()
+    assert health["error_rate_last_hour"] == 0.0
+    assert health["status"] == "healthy"
+
+
+@pytest.mark.asyncio
 async def test_job_details_and_types_include_dead_lettered_jobs(app):
     dlq_id = await _seed_dlq_row(app, job_name="only.failed")
     data = DashboardService(app)

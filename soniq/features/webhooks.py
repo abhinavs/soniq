@@ -43,7 +43,7 @@ def _require_aiohttp():
     if aiohttp is None:
         raise ImportError(
             "aiohttp is required for webhooks. "
-            "Install it with: pip install soniq[webhooks]"
+            "Install it with: pip install 'soniq[webhooks]'"
         )
 
 

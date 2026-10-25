@@ -226,7 +226,7 @@ async def clean_slate(soniq):
 When you need to test against a real SQL database but don't want to run PostgreSQL in CI:
 
 ```bash
-pip install soniq[sqlite]
+pip install "soniq[sqlite]"
 ```
 
 The base `pip install soniq` does not pull in the SQLite driver. Without the

@@ -2,7 +2,6 @@
 
 import asyncio
 import inspect
-import json
 import logging
 import os
 import re
@@ -27,7 +26,7 @@ from pydantic import ValidationError
 
 from ._deprecation import warn_deprecated
 from .backends import StorageBackend
-from .backends.helpers import no_transactional_enqueue
+from .backends.helpers import no_transactional_enqueue, to_json
 from .backends.postgres import PostgresBackend
 from .backends.postgres.migration_runner import MigrationRunner
 from .backends.sqlite import SQLiteBackend
@@ -87,7 +86,7 @@ def _check_job_args(
     the handler's signature, so a typo fails now instead of on every retry.
     """
     try:
-        json.dumps(args, allow_nan=False)
+        to_json(args)
     except (TypeError, ValueError) as e:
         raise SoniqError(
             f"Arguments for task {job_name!r} must be JSON-serializable: {e}",
@@ -113,6 +112,18 @@ def _check_job_args(
             SONIQ_TASK_ARGS_INVALID,
             context={"task_name": job_name},
         ) from e
+
+
+def _derived_name_note(derived: str, pattern: str) -> str:
+    """Extra advice when the derived name fails task_name_pattern."""
+    if re.fullmatch(pattern, derived):
+        return ""
+    # Jobs already queued carry the derived name, so a new name would strand them.
+    return (
+        f"That name does not match task_name_pattern ({pattern!r}), so name= "
+        "rejects it. Either widen SONIQ_TASK_NAME_PATTERN to accept it, or "
+        "pick a name that matches once no jobs are queued under the old one."
+    )
 
 
 def _pool_sizing_error(
@@ -421,6 +432,7 @@ class Soniq:
                     since="0.2.0",
                     removed_in="1.0",
                     use_instead=f"@soniq.job(name={derived!r})",
+                    note=_derived_name_note(derived, task_name_pattern),
                     stacklevel=3,
                 )
             # Typing only: the runtime object is the plain wrapper function.
@@ -497,6 +509,7 @@ class Soniq:
                     since="0.2.0",
                     removed_in="1.0",
                     use_instead=f"@soniq.periodic(..., name={derived!r})",
+                    note=_derived_name_note(derived, self._settings.task_name_pattern),
                     stacklevel=3,
                 )
             retries = job_kwargs.get("retries")

@@ -86,6 +86,10 @@ Job names are checked against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`. If your P
 ALTER DATABASE myapp SET soniq.task_name_pattern = '^[a-z][a-z0-9_.-]*$';
 ```
 
+Only the database-level setting counts. A `SET` or `ALTER ROLE` from a caller is ignored, so a producer can't loosen the check for itself.
+
+With `unique_job` or `dedup_key`, a caller in a `REPEATABLE READ` or `SERIALIZABLE` transaction that races another producer enqueueing the same job gets a serialization failure (SQLSTATE `40001`) instead of the other job's id. Retry the transaction, as you would for any serialization failure. At the default `READ COMMITTED` this doesn't happen.
+
 ### Read a job back
 
 ```sql

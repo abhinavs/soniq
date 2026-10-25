@@ -237,7 +237,7 @@ soniq dead-letter export --format csv --output dead_letter.csv
 
 Launch the web dashboard for monitoring jobs, queues, and workers.
 
-Requires `pip install soniq[dashboard]`.
+Requires `pip install "soniq[dashboard]"`.
 
 ```bash
 soniq dashboard [APP] [--host HOST] [--port PORT] [--reload] [--jobs-modules MODULES]

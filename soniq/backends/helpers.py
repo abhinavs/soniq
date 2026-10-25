@@ -1,6 +1,7 @@
 """Backend helper utilities."""
 
 import json
+import re
 from datetime import datetime
 from typing import Any, NoReturn
 
@@ -20,11 +21,28 @@ def no_transactional_enqueue(backend_name: str) -> NoReturn:
     )
 
 
+# A \u0000 escape that isn't itself an escaped backslash followed by "u0000".
+_NUL_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*\\u0000")
+
+
 def to_json(value: Any) -> str:
     """Encode ``value`` for storage. Plain JSON only, so any language can read
     it back: objects raise ``TypeError`` and NaN/Infinity raise ``ValueError``
-    instead of being turned into Python-flavoured text."""
-    return json.dumps(value, allow_nan=False)
+    instead of being turned into Python-flavoured text.
+
+    Strings that Postgres can't store also raise ``ValueError``: the NUL
+    character, and lone surrogates such as ``"\\ud800"``.
+    """
+    text = json.dumps(value, allow_nan=False, ensure_ascii=False)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(
+            "a string has a lone surrogate, which isn't valid UTF-8"
+        ) from None
+    if "\\u0000" in text and _NUL_ESCAPE.search(text):
+        raise ValueError("a string has a NUL character (\\u0000)")
+    return text
 
 
 def rows_affected(result: str) -> int:

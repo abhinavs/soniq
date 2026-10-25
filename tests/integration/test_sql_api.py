@@ -220,3 +220,129 @@ async def test_null_max_attempts_on_an_unknown_job_still_dead_letters(app):
         row = await conn.fetchrow("SELECT * FROM soniq_get_job($1)", job_id)
     assert row["status"] == "dead_letter"
     assert row["dead_letter_reason"] == "job_not_found"
+
+
+@pytest.mark.asyncio
+async def test_sql_enqueue_with_null_priority_can_dead_letter(app):
+    @app.job(name="sqlapi.fails", retries=0)
+    async def fails():
+        raise RuntimeError("boom")
+
+    async with app.backend.acquire() as conn:
+        job_id = await conn.fetchval(
+            "SELECT soniq_enqueue('sqlapi.fails', priority => NULL)"
+        )
+    await app.run_worker(run_once=True)
+
+    async with app.backend.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM soniq_get_job($1)", job_id)
+    assert row["status"] == "dead_letter"
+
+
+@pytest.mark.asyncio
+async def test_session_setting_cannot_loosen_the_name_check(app):
+    async with app.backend.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL soniq.task_name_pattern = '.*'")
+            with pytest.raises(asyncpg.InvalidParameterValueError):
+                await conn.fetchval("SELECT soniq_enqueue('Not A Name')")
+
+
+@pytest.mark.asyncio
+async def test_args_hash_works_off_the_soniq_search_path(app):
+    async with app.backend.acquire() as conn:
+        schema = await conn.fetchval("SELECT current_schema()")
+        async with conn.transaction():
+            await conn.execute("SET LOCAL search_path = pg_catalog")
+            got = await conn.fetchval(
+                f"SELECT {schema}.soniq_args_hash('{{\"a\": 1}}'::jsonb)"
+            )
+    assert got == compute_args_hash({"a": 1})
+
+
+async def _stranded_job(app, worker_status, hostname="box", pid=1):
+    worker_id, job_id = uuid.uuid4(), uuid.uuid4()
+    async with app.backend.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO soniq_workers (id, hostname, pid, queues, concurrency,"
+            " status, started_at, last_heartbeat)"
+            " VALUES ($1, $2, $3, '{default}', 1, $4, NOW(), NOW())",
+            worker_id,
+            hostname,
+            pid,
+            worker_status,
+        )
+        await conn.execute(
+            "INSERT INTO soniq_jobs (id, job_name, args, status, worker_id)"
+            " VALUES ($1, 'sqlapi.send', '{\"n\": 1}', 'processing', $2)",
+            job_id,
+            worker_id,
+        )
+    return job_id
+
+
+async def _status(app, job_id):
+    async with app.backend.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT status FROM soniq_jobs WHERE id = $1", job_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_requeues_jobs_held_by_a_stopped_worker(app):
+    # A job whose final write failed stays 'processing' after its worker exits.
+    stranded = await _stranded_job(app, "stopped")
+    running = await _stranded_job(app, "active", hostname="other")
+
+    await app.backend.cleanup_stale_workers(stale_threshold_seconds=300)
+
+    assert await _status(app, stranded) == "queued"
+    assert await _status(app, running) == "processing"
+
+
+@pytest.mark.asyncio
+async def test_worker_restarted_with_the_same_pid_can_register(app):
+    job_id = await _stranded_job(app, "active")
+    async with app.backend.acquire() as conn:
+        # A finished job keeps its worker_id, which used to break the restart.
+        await conn.execute(
+            "INSERT INTO soniq_jobs (id, job_name, args, status, worker_id)"
+            " SELECT $1, job_name, args, 'done', worker_id FROM soniq_jobs"
+            " WHERE id = $2",
+            uuid.uuid4(),
+            job_id,
+        )
+
+    await app.backend.register_worker(
+        worker_id=str(uuid.uuid4()),
+        hostname="box",
+        pid=1,
+        queues=["default"],
+        concurrency=1,
+    )
+    assert await _status(app, job_id) == "queued"
+
+
+@pytest.mark.asyncio
+async def test_second_worker_in_the_same_process_leaves_jobs_alone(app):
+    first = str(uuid.uuid4())
+    kwargs = dict(hostname="box", pid=2, queues=["default"], concurrency=1)
+    await app.backend.register_worker(worker_id=first, **kwargs)
+    job_id = uuid.uuid4()
+    async with app.backend.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO soniq_jobs (id, job_name, args, status, worker_id)"
+            " VALUES ($1, 'sqlapi.send', '{\"n\": 1}', 'processing', NULL)",
+            job_id,
+        )
+        await conn.execute(
+            "UPDATE soniq_jobs SET worker_id = $1 WHERE id = $2",
+            uuid.UUID(first),
+            job_id,
+        )
+    await app.backend.update_heartbeat(first)
+
+    # The first worker is alive and mid-job, so its job must not be requeued.
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        await app.backend.register_worker(worker_id=str(uuid.uuid4()), **kwargs)
+    assert await _status(app, job_id) == "processing"

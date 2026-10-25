@@ -21,7 +21,7 @@ def _require_aiosqlite() -> None:
     if aiosqlite is None:
         raise ImportError(
             "aiosqlite is required for the SQLite backend. "
-            "Install it with: pip install soniq[sqlite]"
+            "Install it with: pip install 'soniq[sqlite]'"
         )
 
 

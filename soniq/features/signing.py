@@ -25,7 +25,7 @@ def _require_cryptography():
     if Fernet is None:
         raise ImportError(
             "cryptography is required for signing/encryption. "
-            "Install it with: pip install soniq[webhooks]"
+            "Install it with: pip install 'soniq[webhooks]'"
         )
 
 

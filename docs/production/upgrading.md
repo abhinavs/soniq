@@ -8,7 +8,7 @@ You can upgrade without downtime. Jobs already in the queue keep running, recurr
 
 - Two functions, `soniq_enqueue()` and `soniq_get_job()`, so code in other languages can enqueue jobs and read their results. See [Storage format](../reference/storage-format.md). 0.1.0 never calls them.
 - The `soniq_jobs.max_attempts` column default goes from 3 to 4. Python always sets the value itself, so this only matters for raw `INSERT`s that leave the column out. 4 matches what Python writes by default (`retries=3`, plus the first attempt).
-- 0.1.0 stored some dead-letter `tags` as a JSON string holding an object. The migration rewrites those rows as objects. 0.2.0 reads both shapes, because a 0.1.0 worker that is still running can write more.
+- 0.1.0 stored some dead-letter `tags` as a JSON string holding an object. The migration rewrites those rows as objects. 0.2.0 reads both shapes, because a 0.1.0 worker that is still running can write more. Rows a 0.1.0 worker writes after the migration keep the old shape, so a dead-letter search by tag can miss them. `soniq setup` won't rerun the migration, so once the last 0.1.0 worker is gone, run its `UPDATE soniq_dead_letter_jobs` statement by hand (`soniq migrations export --sql --from 0005` prints it). It is safe to run more than once.
 
 The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row, and the other way round.
 
@@ -20,7 +20,7 @@ The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row
     soniq setup myapp.jobs:soniq
     ```
 
-    It applies only `0006_sql_api`. If Alembic owns your schema, export just the new migration instead:
+    It applies only `0006_sql_api`. The migration changes a column default on `soniq_jobs`, which takes a brief exclusive lock on the table. It waits at most 5 seconds for that lock (busy workers hold short locks on the table) and fails rather than stall the queue behind it. If it fails, run `soniq setup` again: nothing was applied. If Alembic owns your schema, export just the new migration instead:
 
     ```bash
     soniq migrations export --alembic --from 0005 --down-revision <rev> \
@@ -35,7 +35,7 @@ The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row
 
 ## Things to check in your code
 
-- **Job names.** `@soniq.job()` and `@soniq.periodic(...)` without `name=` now warn. Set `name=` to exactly the name the warning prints. A different name breaks the link to jobs already queued under the old one, and those jobs go to the dead-letter queue as `job_not_found`. Rename later, after the queue has drained.
+- **Job names.** `@soniq.job()` and `@soniq.periodic(...)` without `name=` now warn. Set `name=` to exactly the name the warning prints. A different name breaks the link to jobs already queued under the old one, and those jobs go to the dead-letter queue as `job_not_found`. Rename later, after the queue has drained. If the warning says the printed name doesn't match `task_name_pattern` (an uppercase letter or a leading underscore in the module path, say), `name=` will reject it. Either widen `SONIQ_TASK_NAME_PATTERN` so it matches, or wait until no jobs are queued under the old name and then switch to a name that fits.
 - **Arguments must be plain JSON.** `enqueue` rejects `NaN` and `Infinity` with `SONIQ_TASK_ARGS_INVALID`. It already rejected `datetime`, `UUID` and other objects.
 - **Return values must be plain JSON.** A handler that returns a `datetime` or a Pydantic model used to have its `str()` stored. Now the job completes and the result is `None`, with an error in the worker log. During the roll, the same job can end up with either, depending on which worker ran it.
 - **`SONIQ_DEPRECATIONS=error`** turns the warnings into errors, and that happens at import, as the decorators run. Leave it off until your job names are fixed.

@@ -2,6 +2,7 @@
 FastAPI web dashboard for Soniq.
 """
 
+import hmac
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -59,8 +60,7 @@ def _require_write_authorization(request: "Request") -> None:
         status_code=403,
         detail=(
             "Dashboard writes require SONIQ_DASHBOARD_API_KEY. Set it on "
-            "the dashboard process and pass `X-API-Key: <key>` (or "
-            "`?api_key=<key>`) on each write request."
+            "the dashboard process and pass `X-API-Key: <key>` on each write request."
         ),
     )
 
@@ -129,10 +129,9 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
                     path = path[len(root) :]
                 if path in ("", "/") or request.method == "OPTIONS":
                     return await call_next(request)
-                key = request.headers.get("X-API-Key") or request.query_params.get(
-                    "api_key"
-                )
-                if key != dashboard_api_key:
+                # Header only: a key in the query string ends up in access logs.
+                key = request.headers.get("X-API-Key", "")
+                if not hmac.compare_digest(key.encode(), dashboard_api_key.encode()):
                     return JSONResponse(
                         {"detail": "Invalid or missing API key"}, status_code=401
                     )
@@ -206,7 +205,8 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
 
     @app.get("/api/dead-letter")
     async def api_dead_letter_jobs(
-        limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0)
+        limit: int = Query(50, ge=1, le=1000),
+        offset: int = Query(0, ge=0, le=1_000_000),
     ) -> Dict[str, Any]:
         """Dead-letter jobs, newest first"""
         return await data.get_dead_letter_jobs(limit=limit, offset=offset)
@@ -240,7 +240,7 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         queue: Optional[str] = None,
         job_name: Optional[str] = None,
         limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
+        offset: int = Query(0, ge=0, le=1_000_000),
     ) -> Dict[str, Any]:
         """Search and filter jobs with pagination"""
         return await data.search_jobs(

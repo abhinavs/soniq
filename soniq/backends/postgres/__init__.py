@@ -31,6 +31,9 @@ _INSERT_JOB_SQL = """
 # index counts. The existing queued row is then looked up by
 # _FIND_DUPLICATE_SQL. If a worker claims it in between, insert again.
 _ON_CONFLICT_SQL = " ON CONFLICT DO NOTHING RETURNING id"
+
+# Tells this process's worker rows apart from a dead process with the same pid.
+_PROCESS_ID = str(uuid.uuid4())
 _FIND_DUPLICATE_SQL = """
     SELECT id FROM soniq_jobs
     WHERE status = 'queued'
@@ -624,9 +627,9 @@ class PostgresBackend:
                     uid,
                     row["job_name"],
                     row["args"],
-                    row["queue"],
-                    row["priority"],
-                    # The dead-letter column is NOT NULL.
+                    row["queue"] or "default",
+                    # These dead-letter columns are NOT NULL, unlike soniq_jobs.
+                    row["priority"] if row["priority"] is not None else 100,
                     (
                         row["max_attempts"]
                         if row["max_attempts"] is not None
@@ -870,29 +873,63 @@ class PostgresBackend:
         metadata: Optional[dict] = None,
     ) -> None:
         uid = uuid.UUID(worker_id)
+        metadata = {**(metadata or {}), "process_id": _PROCESS_ID}
         async with self.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO soniq_workers
-                    (id, hostname, pid, queues, concurrency, status, started_at, metadata)
-                VALUES ($1, $2, $3, $4, $5, 'active', NOW(), $6)
-                ON CONFLICT (hostname, pid)
-                DO UPDATE SET
-                    id = EXCLUDED.id,
-                    queues = EXCLUDED.queues,
-                    concurrency = EXCLUDED.concurrency,
-                    status = 'active',
-                    last_heartbeat = NOW(),
-                    started_at = NOW(),
-                    metadata = EXCLUDED.metadata
-                """,
-                uid,
-                hostname,
-                pid,
-                queues,
-                concurrency,
-                metadata,
-            )
+            async with conn.transaction():
+                # A row with our hostname and pid from another process belongs
+                # to a dead one, e.g. a container restarted in place as pid 1.
+                # Requeue what it held and delete it: done jobs still reference
+                # its id, so changing the id in place breaks the foreign key.
+                await conn.execute(
+                    """
+                    UPDATE soniq_jobs
+                    SET status = 'queued', worker_id = NULL, updated_at = NOW()
+                    WHERE status = 'processing'
+                      AND worker_id IN (
+                        SELECT id FROM soniq_workers
+                        WHERE hostname = $1 AND pid = $2
+                          AND metadata->>'process_id' IS DISTINCT FROM $3
+                      )
+                    """,
+                    hostname,
+                    pid,
+                    _PROCESS_ID,
+                )
+                await conn.execute(
+                    """
+                    DELETE FROM soniq_workers
+                    WHERE hostname = $1 AND pid = $2
+                      AND metadata->>'process_id' IS DISTINCT FROM $3
+                    """,
+                    hostname,
+                    pid,
+                    _PROCESS_ID,
+                )
+                # ponytail: a second worker in the same process (tests only;
+                # the CLI and lifespan run one per process) takes over the row,
+                # as in 0.1.0. One row per worker needs a new unique key.
+                await conn.execute(
+                    """
+                    INSERT INTO soniq_workers
+                        (id, hostname, pid, queues, concurrency, status, started_at, metadata)
+                    VALUES ($1, $2, $3, $4, $5, 'active', NOW(), $6)
+                    ON CONFLICT (hostname, pid)
+                    DO UPDATE SET
+                        id = EXCLUDED.id,
+                        queues = EXCLUDED.queues,
+                        concurrency = EXCLUDED.concurrency,
+                        status = 'active',
+                        last_heartbeat = NOW(),
+                        started_at = NOW(),
+                        metadata = EXCLUDED.metadata
+                    """,
+                    uid,
+                    hostname,
+                    pid,
+                    queues,
+                    concurrency,
+                    metadata,
+                )
 
     async def update_heartbeat(
         self,
@@ -904,7 +941,7 @@ class PostgresBackend:
             await conn.execute(
                 """
                 UPDATE soniq_workers
-                SET last_heartbeat = NOW(), metadata = $2
+                SET last_heartbeat = NOW(), metadata = coalesce($2, metadata)
                 WHERE id = $1
                 """,
                 uid,
@@ -1006,21 +1043,24 @@ class PostgresBackend:
                     str(stale_threshold_seconds),
                 )
 
-                if not stale_rows:
-                    return 0
-
-                stale_ids = [row["id"] for row in stale_rows]
+                # Requeue jobs held by any worker that isn't active: just
+                # marked stale, or stopped while a job was still processing
+                # (say its final write failed). NULL worker_id means a
+                # run_once worker, which has no row, so leave those alone.
                 await conn.execute(
                     """
-                    UPDATE soniq_jobs
+                    UPDATE soniq_jobs j
                     SET status = 'queued', worker_id = NULL, updated_at = NOW()
-                    WHERE status = 'processing'
-                      AND worker_id = ANY($1::uuid[])
-                    """,
-                    stale_ids,
+                    WHERE j.status = 'processing'
+                      AND j.worker_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM soniq_workers w
+                        WHERE w.id = j.worker_id AND w.status = 'active'
+                      )
+                    """
                 )
 
-                return len(stale_ids)
+                return len(stale_rows)
 
     async def delete_expired_jobs(self) -> int:
         async with self.acquire() as conn:

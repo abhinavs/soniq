@@ -112,6 +112,11 @@ async def test_api_key_lets_html_page_and_preflight_through_under_a_prefix(
         assert (
             await client.get("/api/panels", headers={"X-API-Key": "secret"})
         ).status_code == 200
+        # The query string ends up in access logs, so it isn't accepted.
+        assert (await client.get("/api/panels?api_key=secret")).status_code == 401
+        assert (
+            await client.get("/api/panels", headers={"X-API-Key": "wrong"})
+        ).status_code == 401
         assert (await client.options("/api/panels")).status_code != 401
 
     mounted = httpx.ASGITransport(app=fastapi_app, root_path="/admin")
@@ -125,6 +130,8 @@ async def test_api_key_lets_html_page_and_preflight_through_under_a_prefix(
     [
         "/api/jobs?limit=-1",
         "/api/jobs/search?offset=-5",
+        "/api/jobs/search?offset=99999999999999999999",
+        "/api/dead-letter?offset=99999999999999999999",
         "/api/dead-letter?limit=-1",
         "/api/metrics?hours=99999999999",
         "/api/jobs/timeline?hours=0",

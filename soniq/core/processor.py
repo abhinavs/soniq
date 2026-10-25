@@ -9,12 +9,12 @@ the StorageBackend abstraction.
 import asyncio
 import concurrent.futures
 import inspect
-import json
 import logging
 import time
 import traceback
 from typing import Any, List, Optional
 
+from soniq.backends.helpers import to_json
 from soniq.core.middleware import build_chain
 from soniq.core.registry import JobRegistry
 from soniq.core.retry import DEFAULT_RETRY_POLICY
@@ -41,7 +41,16 @@ def _format_job_error(exc: BaseException) -> str:
     rendered = f"{type(exc).__name__}: {exc}\n{tb}"
     if len(rendered) > _MAX_LAST_ERROR_CHARS:
         rendered = rendered[:_MAX_LAST_ERROR_CHARS]
-    return rendered
+    return _storable_text(rendered)
+
+
+def _storable_text(text: str) -> str:
+    """Drop what a Postgres text column rejects: NUL and lone surrogates.
+
+    Otherwise the write fails and the job is never retried or dead-lettered.
+    """
+    text = text.replace("\x00", "")
+    return text.encode("utf-8", "replace").decode("utf-8")
 
 
 async def _execute_job_safely(
@@ -399,7 +408,7 @@ async def _dispatch_and_record(
         await backend.mark_job_dead_letter(
             job_id,
             attempts=max_attempts,
-            error=str(corruption_error),
+            error=_storable_text(str(corruption_error)),
             reason="invalid_arguments",
         )
         await _emit_end("dead_letter", error=str(corruption_error))
@@ -450,14 +459,15 @@ async def _dispatch_and_record(
         # The handler's side effects already happened, so a bad return value
         # doesn't fail the job. Store no result rather than Python-only text.
         try:
-            json.dumps(job_result, allow_nan=False)
-        except (TypeError, ValueError):
+            to_json(job_result)
+        except (TypeError, ValueError) as e:
             logger.error(
-                "Job %s (%s) returned a %s, which is not plain JSON; "
+                "Job %s (%s) returned a %s that can't be stored (%s); "
                 "the job is done but no result is stored",
                 job_id,
                 job_name,
                 type(job_result).__name__,
+                e,
             )
             job_result = None
         await backend.mark_job_done(

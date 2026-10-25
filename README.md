@@ -162,12 +162,12 @@ soniq dashboard                       # binds 127.0.0.1:6161
 
 ```bash
 pip install soniq              # core + scheduler + Prometheus sink (Postgres backend)
-pip install soniq[full]        # everything below
-pip install soniq[dashboard]   # web dashboard (FastAPI + uvicorn)
-pip install soniq[webhooks]    # webhook delivery + signing
-pip install soniq[logging]     # structlog integration
-pip install soniq[sqlalchemy]  # pass a SQLAlchemy session to enqueue
-pip install soniq[psycopg]     # pass a psycopg 3 connection to enqueue
+pip install "soniq[full]"        # everything below
+pip install "soniq[dashboard]"   # web dashboard (FastAPI + uvicorn)
+pip install "soniq[webhooks]"    # webhook delivery + signing
+pip install "soniq[logging]"     # structlog integration
+pip install "soniq[sqlalchemy]"  # pass a SQLAlchemy session to enqueue
+pip install "soniq[psycopg]"     # pass a psycopg 3 connection to enqueue
 ```
 
 The default install is batteries-included: `croniter` (so `@periodic` and the recurring scheduler work out of the box) and `prometheus_client` (so `PrometheusMetricsSink` is importable) ship with core. They stay dormant unless wired - the scheduler only runs if you start it, and the default `MetricsSink` is `NoopMetricsSink`.

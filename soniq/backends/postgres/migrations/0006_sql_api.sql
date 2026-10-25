@@ -11,7 +11,12 @@
 -- Old workers ignore all of this, so 0.1.0 and 0.2.0 workers can share a
 -- database after it runs. Needs a UTF8 database (the default).
 
--- One JSON string as text,, escaped the way Python's json.dumps(ensure_ascii=True) does.
+-- The ALTER TABLE at the end needs a brief exclusive lock on soniq_jobs.
+-- Give up rather than queue every enqueue and claim behind a long
+-- transaction; rerunning `soniq setup` later is safe.
+SET LOCAL lock_timeout = '5s';
+
+-- One JSON string as text, escaped the way Python's json.dumps(ensure_ascii=True) does.
 CREATE OR REPLACE FUNCTION soniq_json_string(s text) RETURNS text
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT CASE
@@ -77,8 +82,15 @@ CREATE OR REPLACE FUNCTION soniq_enqueue(
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$
 #variable_conflict use_variable
 DECLARE
-  v_pattern text := coalesce(nullif(current_setting('soniq.task_name_pattern', true), ''),
-                             '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$');
+  -- Read the ALTER DATABASE value, not current_setting(): a caller could
+  -- SET the pattern in its own session to get past the check.
+  v_pattern text := coalesce(
+    (SELECT nullif(substr(c, length('soniq.task_name_pattern=') + 1), '')
+     FROM pg_db_role_setting s, unnest(s.setconfig) AS c
+     WHERE s.setrole = 0
+       AND s.setdatabase = (SELECT oid FROM pg_database WHERE datname = current_database())
+       AND c LIKE 'soniq.task\_name\_pattern=%'),
+    '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$');
   v_hash text;
   v_id uuid;
 BEGIN
@@ -101,7 +113,7 @@ BEGIN
       (id, job_name, args, args_hash, max_attempts, priority, queue,
        unique_job, dedup_key, scheduled_at, producer_id)
     VALUES (coalesce(job_id, gen_random_uuid()), job_name, args, v_hash, max_attempts,
-            priority, coalesce(queue, 'default'), coalesce(unique_job, false),
+            coalesce(priority, 100), coalesce(queue, 'default'), coalesce(unique_job, false),
             dedup_key, run_at, producer_id)
     ON CONFLICT DO NOTHING          -- covers both the dedup_key and the (job_name, args_hash) index
     RETURNING j.id INTO v_id;
@@ -131,6 +143,11 @@ $$;
 -- can't be hijacked through the caller's search_path.
 DO $$
 BEGIN
+  -- The hash helpers call each other by name, so pin them too: a caller
+  -- whose search_path lacks the Soniq schema can still use soniq_args_hash.
+  EXECUTE format('ALTER FUNCTION soniq_json_string(text) SET search_path = pg_catalog, %I', current_schema());
+  EXECUTE format('ALTER FUNCTION soniq_args_canonical(jsonb) SET search_path = pg_catalog, %I', current_schema());
+  EXECUTE format('ALTER FUNCTION soniq_args_hash(jsonb) SET search_path = pg_catalog, %I', current_schema());
   EXECUTE format(
     'ALTER FUNCTION soniq_enqueue(text, jsonb, text, int, timestamptz, int, boolean, text, text, uuid) SET search_path = pg_catalog, %I, pg_temp',
     current_schema());
@@ -187,12 +204,13 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION soniq_get_job(uuid) FROM PUBLIC;
 
--- Python enqueues with max_attempts = retries + 1 = 4 by default. Match it
--- for raw INSERTs that leave the column out (it was 3).
-ALTER TABLE soniq_jobs ALTER COLUMN max_attempts SET DEFAULT 4;
-
 -- Soniq 0.1.0 stored some dead-letter tags encoded twice, as a JSON string
 -- holding an object. Store them as the object.
 UPDATE soniq_dead_letter_jobs
 SET tags = (tags #>> '{}')::jsonb
 WHERE jsonb_typeof(tags) = 'string' AND tags #>> '{}' LIKE '{%';
+
+-- Python enqueues with max_attempts = retries + 1 = 4 by default. Match it
+-- for raw INSERTs that leave the column out (it was 3).
+-- Last, so the exclusive lock is held only until COMMIT.
+ALTER TABLE soniq_jobs ALTER COLUMN max_attempts SET DEFAULT 4;

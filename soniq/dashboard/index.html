@@ -358,9 +358,18 @@ function store(kind, key, value) {
 
 // ---- API ---------------------------------------------------------------
 
+// A key in the link (#api_key=... or ?api_key=...) is saved for the tab and
+// removed from the address bar, so it doesn't sit in history or get shared.
 (function takeKeyFromUrl() {
-  const params = new URLSearchParams(location.search);
-  if (params.get('api_key')) store('session', KEY_STORE, params.get('api_key'));
+  const query = new URLSearchParams(location.search);
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const key = hash.get('api_key') || query.get('api_key');
+  if (!key) return;
+  store('session', KEY_STORE, key);
+  query.delete('api_key');
+  hash.delete('api_key');
+  const q = query.toString(), h = hash.toString();
+  history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + (h ? '#' + h : ''));
 })();
 
 class AuthError extends Error {}

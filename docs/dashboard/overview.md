@@ -21,7 +21,7 @@ The page has light and dark themes, refreshes itself every 10 seconds while the 
 ### 1. Install the dashboard extra
 
 ```bash
-pip install soniq[dashboard]
+pip install "soniq[dashboard]"
 ```
 
 This pulls in FastAPI and Uvicorn.
@@ -48,7 +48,7 @@ export SONIQ_DASHBOARD_API_KEY="$(openssl rand -hex 32)"
 ```
 
 Write mode needs both variables; with only the first, the page stays read-only. Once the key is set, every request (reads too)
-must send it in the `X-API-Key` header or the `?api_key=` query parameter.
+must send it in the `X-API-Key` header. To hand someone a working link, put the key in the fragment (`https://host/#api_key=<key>`): browsers never send the fragment to the server, and the page saves the key and clears it from the address bar.
 The HTML page itself and CORS preflight requests load without the key, also when mounted under a prefix. The page asks for the key the first time and keeps it for the browser tab.
 There is no localhost exemption, because a reverse proxy on the same host
 looks exactly like a local caller.

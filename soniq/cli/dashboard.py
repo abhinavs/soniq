@@ -37,7 +37,9 @@ async def handle_dashboard(args) -> int:
     from soniq import DASHBOARD_AVAILABLE
 
     if not DASHBOARD_AVAILABLE:
-        print("Dashboard is not available. Install with: pip install soniq[dashboard]")
+        print(
+            "Dashboard is not available. Install with: pip install 'soniq[dashboard]'"
+        )
         return 1
 
     # The dashboard exposes dead-letter replay, which re-inserts a soniq_jobs

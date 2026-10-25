@@ -16,6 +16,8 @@ Run `soniq setup` once to apply migration `0006_sql_api` (or export it with `son
 - `enqueue` rejects `NaN`, `Infinity` and `-Infinity` with `SONIQ_TASK_ARGS_INVALID`. They used to get past the check and fail inside the database driver.
 - `@soniq.job()` and `@soniq.periodic(...)` without `name=` warn. See Deprecations.
 - During a rolling deploy, a handler that returns something that isn't JSON gets its `str()` stored on a 0.1.0 worker and `None` on a 0.2.0 one.
+- `enqueue` also rejects args holding a NUL character (`\x00`) or a lone surrogate, which Postgres can't store. They used to fail with a raw driver error.
+- The dashboard API key must come in the `X-API-Key` header. `?api_key=` is no longer accepted, because query strings end up in access logs. To share a link, use `#api_key=<key>`: the page saves it and clears it from the address bar.
 - The dashboard API changed: new endpoints, `limit`/`offset`/`hours` are range-checked (bad values get a 422), an unknown panel is a 404, metrics count only finished jobs, and timestamps are UTC with an offset. Rolling the dashboard back removes the new endpoints.
 
 ### Deprecations
@@ -42,6 +44,17 @@ Run `soniq setup` once to apply migration `0006_sql_api` (or export it with `son
 - Dashboard metrics counted queued and cancelled jobs as processed and left dead-lettered jobs out. Now only finished jobs count, and failures are the jobs that reached the dead-letter table. Job types use the same rule.
 - The dashboard chart counted completions in the hour a job was enqueued and dropped hours with only failures. It now buckets each event by when it happened, in whole UTC hours.
 - The dashboard works when mounted under a path, sends the API key it was given, and escapes job names and errors it shows.
+- A job whose error message held a NUL character, or whose result held a lone surrogate, stayed in `processing` forever, because the final database write failed. The error text drops those characters, and such a result is stored as `None`.
+- The stale-worker sweep now also requeues `processing` jobs whose worker is already stopped. Before, it only caught workers that were still marked active with an old heartbeat.
+- A worker restarted with the same hostname and pid (a container restarted in place, as pid 1) couldn't register while any job row still pointed at the old worker. It now replaces the old worker row and requeues anything it held.
+- `soniq_enqueue(priority => NULL)` wrote a job that couldn't be dead-lettered, so it got stuck after its last attempt.
+- The deprecation warning for a derived job name could suggest a name that `task_name_pattern` rejects (an uppercase letter or a leading underscore in the module path). It now says so and what to do about it.
+- Migration 0006 waits at most 5 seconds for its table lock and takes the exclusive lock last, so it can't stall the queue behind it.
+- `soniq_enqueue()` ignores a `soniq.task_name_pattern` set by the caller's session or role. Only the database-level setting counts.
+- `soniq_args_hash()` and its helpers work when the Soniq schema isn't on the caller's `search_path`.
+- Dashboard metrics and health counted a replayed dead-letter job twice: once as the failure and again as the replay. The error rate no longer counts dead-letter rows that were replayed.
+- The dashboard compares API keys in constant time, and a huge `offset` gets a 422 instead of a 500.
+- Install hints quote the extra (`pip install "soniq[dashboard]"`), so they work in zsh.
 - The testing guide's dead-letter example used the memory fixture and `max_retries=`. It uses `soniq_pg` and `retries=`.
 
 ### Added

@@ -24,14 +24,14 @@ scheduler only runs if you start it, and the default `MetricsSink` is
 Install only what you need:
 
 ```bash
-pip install soniq[sqlite]       # aiosqlite -- SQLite backend for local dev
-pip install soniq[webhooks]     # aiohttp + cryptography -- HTTP callbacks and payload signing
-pip install soniq[dashboard]    # fastapi + uvicorn -- web dashboard
-pip install soniq[logging]      # structlog -- structured JSON logging
-pip install soniq[full]         # everything above
+pip install "soniq[sqlite]"       # aiosqlite -- SQLite backend for local dev
+pip install "soniq[webhooks]"     # aiohttp + cryptography -- HTTP callbacks and payload signing
+pip install "soniq[dashboard]"    # fastapi + uvicorn -- web dashboard
+pip install "soniq[logging]"      # structlog -- structured JSON logging
+pip install "soniq[full]"         # everything above
 ```
 
-Combine extras freely: `pip install soniq[sqlite,dashboard]`.
+Combine extras freely: `pip install "soniq[sqlite,dashboard]"`.
 
 ## Backend auto-detection
 
@@ -71,8 +71,8 @@ Optional capabilities are activated by running the matching process or by instal
 | Dead-letter queue | Always on. Failed jobs that exhaust retries land in `soniq_dead_letter_jobs`. |
 | Per-job timeouts | Always on (default `SONIQ_JOB_TIMEOUT=300` seconds). Override per-job with `@soniq.job(timeout=...)` or set `SONIQ_JOB_TIMEOUT=0` to disable. |
 | Recurring jobs | Run `soniq scheduler` alongside your worker. |
-| Web dashboard | `pip install soniq[dashboard]` and run `soniq dashboard`. Dashboard mutations require `SONIQ_DASHBOARD_WRITE_ENABLED=true`. |
-| HTTP webhooks | `pip install soniq[webhooks]` and configure `soniq.webhooks`. |
+| Web dashboard | `pip install "soniq[dashboard]"` and run `soniq dashboard`. Dashboard mutations require `SONIQ_DASHBOARD_WRITE_ENABLED=true`. |
+| HTTP webhooks | `pip install "soniq[webhooks]"` and configure `soniq.webhooks`. |
 | Prometheus metrics | Wire a `PrometheusMetricsSink` on the `Soniq(...)` constructor. The default sink is a no-op. |
 
 ## Job module discovery

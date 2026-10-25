@@ -142,7 +142,9 @@ class DashboardService:
 
     async def get_job_metrics(self, hours: int = 24) -> Dict[str, Any]:
         # A job counts as processed once it finishes: done in soniq_jobs, or
-        # moved to the dead-letter table. Queued and running rows don't count.
+        # moved to the dead-letter table. Queued and running rows don't count,
+        # and neither do replayed dead-letter rows: the replay is a new job
+        # that gets counted on its own.
         async with self._acquire() as conn:
             metrics = await conn.fetchrow(
                 """
@@ -159,6 +161,7 @@ class DashboardService:
                 """
                 SELECT COUNT(*) FROM soniq_dead_letter_jobs
                 WHERE moved_to_dead_letter_at >= NOW() - make_interval(hours => $1)
+                  AND resurrection_count = 0
                 """,
                 hours,
             )
@@ -264,6 +267,7 @@ class DashboardService:
                 """
                 SELECT COUNT(*) FROM soniq_dead_letter_jobs
                 WHERE moved_to_dead_letter_at > NOW() - INTERVAL '1 hour'
+                  AND resurrection_count = 0
                 """
             )
             return {
@@ -475,6 +479,7 @@ class DashboardService:
                 """
                 SELECT COUNT(*) FROM soniq_dead_letter_jobs
                 WHERE moved_to_dead_letter_at > NOW() - INTERVAL '1 hour'
+                  AND resurrection_count = 0
                 """
             )
             dead_lettered_recent = int(dead_lettered_recent or 0)
