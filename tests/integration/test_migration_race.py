@@ -84,3 +84,28 @@ async def test_parallel_migrations_no_duplicate_apply():
     counts = {row["version"]: row["n"] for row in rows}
     assert len(counts) == expected
     assert all(n == 1 for n in counts.values()), counts
+
+
+@pytest.mark.asyncio
+async def test_concurrent_setup_on_empty_db():
+    # Eight runners on a database with no soniq_migrations table yet.
+    base, _, _ = TEST_DATABASE_URL.rpartition("/")
+    admin = await asyncpg.connect(f"{base}/postgres")
+    await admin.execute("DROP DATABASE IF EXISTS soniq_fix_e_race_t")
+    await admin.execute("CREATE DATABASE soniq_fix_e_race_t")
+    try:
+        target = f"{base}/soniq_fix_e_race_t"
+
+        async def one():
+            conn = await asyncpg.connect(target)
+            try:
+                r = MigrationRunner()
+                await r._get_migration_status_with_connection(conn, "000")
+                await r._run_migrations_with_connection(conn, "000")
+            finally:
+                await conn.close()
+
+        await asyncio.gather(*(one() for _ in range(8)))
+    finally:
+        await admin.execute("DROP DATABASE IF EXISTS soniq_fix_e_race_t")
+        await admin.close()

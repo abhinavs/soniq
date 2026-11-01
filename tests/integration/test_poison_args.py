@@ -14,8 +14,10 @@ import pytest
 from soniq import Soniq
 from tests.db_utils import TEST_DATABASE_URL
 
-# Postgres parses up to about 18,000 levels with the default stack.
-DEPTH = 15000
+# Python 3.12 and 3.13 can't decode from about 10,000 levels. Postgres
+# parses about 18,000 with the default 2MB stack on macOS, but Postgres 15
+# on a Linux CI runner already fails at 15,000.
+DEPTH = 10500
 POISON = {
     "huge_int": '{"x": ' + "9" * 4301 + "}",
     "deep": '{"x": ' + "[" * DEPTH + "]" * DEPTH + "}",
@@ -74,7 +76,10 @@ async def test_undecodable_args_are_dead_lettered(app, kind):
     async def echo(msg: str = ""):
         return {"msg": msg}
 
-    poison_id = await _insert_raw(app, args_text)
+    try:
+        poison_id = await _insert_raw(app, args_text)
+    except asyncpg.StatementTooComplexError:
+        pytest.skip("this Postgres can't store args nested this deep")
     good_id = await app.enqueue(echo, msg="ok")
 
     # Reading the row degrades to the raw text instead of raising.

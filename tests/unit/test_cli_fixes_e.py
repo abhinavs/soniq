@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import contextlib
 import os
 
@@ -112,37 +111,6 @@ async def test_export_missing_output_dir_is_a_clean_error(tmp_path, capsys):
         cli_dl.cli_app = cli_app
     assert rc == 1
     assert "Can't write" in capsys.readouterr().err
-
-
-@pytest.mark.asyncio
-async def test_concurrent_setup_on_empty_db():
-    url = os.environ.get("SONIQ_DATABASE_URL")
-    if not url:
-        pytest.skip("needs SONIQ_DATABASE_URL")
-    import asyncpg
-
-    from soniq.backends.postgres.migration_runner import MigrationRunner
-
-    base, _, _ = url.rpartition("/")
-    admin = await asyncpg.connect(f"{base}/postgres")
-    await admin.execute("DROP DATABASE IF EXISTS soniq_fix_e_race_t")
-    await admin.execute("CREATE DATABASE soniq_fix_e_race_t")
-    try:
-        target = f"{base}/soniq_fix_e_race_t"
-
-        async def one():
-            conn = await asyncpg.connect(target)
-            try:
-                r = MigrationRunner()
-                await r._get_migration_status_with_connection(conn, "000")
-                await r._run_migrations_with_connection(conn, "000")
-            finally:
-                await conn.close()
-
-        await asyncio.gather(*(one() for _ in range(8)))
-    finally:
-        await admin.execute("DROP DATABASE IF EXISTS soniq_fix_e_race_t")
-        await admin.close()
 
 
 @pytest.mark.asyncio
