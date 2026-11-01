@@ -1,4 +1,4 @@
-"""A row whose args Python can't decode must not wedge the queue.
+"""A row whose args Python can't decode must not block the queue.
 
 Postgres accepts JSON that json.loads rejects: an int over 4300 digits, or
 nesting deeper than Python's recursion limit. Such a row is dead-lettered

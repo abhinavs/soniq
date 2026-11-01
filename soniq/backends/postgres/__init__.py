@@ -67,7 +67,7 @@ def _pool_json_loads(text: str) -> Any:
 
     Postgres accepts JSON that json.loads rejects: ints over 4300 digits,
     nesting deeper than the recursion limit. Raising here would fail the
-    whole query, so one such row would wedge every worker's claim. The
+    whole query, so one such row would block every worker's claim. The
     worker dead-letters a job whose args come back as a string.
     """
     try:
