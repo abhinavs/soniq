@@ -97,4 +97,6 @@ def test_dead_letter_tags_python_cannot_decode_read_as_none():
 
     assert _tags('{"a": "b"}') == {"a": "b"}
     assert _tags({"a": "b"}) == {"a": "b"}
-    assert _tags("[" * 100_000 + "]" * 100_000) is None
+    # Over 4300 digits: every supported Python refuses it, while 3.14 decodes
+    # nesting far deeper than 3.13 does.
+    assert _tags('{"a": ' + "9" * 4301 + "}") is None
