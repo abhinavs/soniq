@@ -88,6 +88,28 @@ async def test_delivery_failure_sets_next_retry_at(dispatcher):
     assert delivery.status == "pending"
 
 
+@pytest.mark.asyncio
+async def test_retry_sends_the_same_bytes_whatever_the_key_order(dispatcher):
+    """A retry reloads the payload from JSONB, which reorders keys."""
+    from soniq.features.webhooks import WebhookResult
+
+    endpoint = MagicMock(spec=WebhookEndpoint, url="https://h.example/x")
+    endpoint.plaintext_secret, endpoint.headers, endpoint.active = None, {}, True
+    dispatcher.registry.get_endpoint = AsyncMock(return_value=endpoint)
+    dispatcher._save_delivery_record = AsyncMock()
+    dispatcher.transport.deliver = AsyncMock(
+        return_value=WebhookResult(ok=False, status=500, body="", error="HTTP 500")
+    )
+    bodies = []
+    for payload in ({"b": 1, "a": 2}, {"a": 2, "b": 1}):
+        delivery = WebhookDelivery(
+            id="d", endpoint_id="ep", event="e", payload=payload, status="pending"
+        )
+        await dispatcher._process_delivery(delivery)
+        bodies.append(dispatcher.transport.deliver.call_args.kwargs["payload"])
+    assert bodies[0] == bodies[1]
+
+
 # ---------------------------------------------------------------------------
 # Response body size cap (HIGH-04)
 # ---------------------------------------------------------------------------

@@ -8,12 +8,14 @@ import os
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
+    Iterator,
     List,
     Optional,
     ParamSpec,
@@ -36,7 +38,6 @@ from .core.queue import _normalize_scheduled_time, validation_summary
 from .core.registry import JobRegistry
 from .core.retry import DEFAULT_RETRY_POLICY
 from .core.worker import Worker
-from .dashboard.app import DashboardService
 from .errors import (
     SONIQ_TASK_ARGS_INVALID,
     SONIQ_UNKNOWN_TASK_NAME,
@@ -112,6 +113,23 @@ def _check_job_args(
             f"Invalid arguments for task {job_name!r}: {e}",
             SONIQ_TASK_ARGS_INVALID,
             context={"task_name": job_name},
+        ) from e
+
+
+@contextmanager
+def _schema_hint() -> Iterator[None]:
+    """Turn 'relation soniq_jobs does not exist' into a hint to run setup."""
+    try:
+        yield
+    except Exception as e:
+        # 42P01 is undefined_table. Checked by SQLSTATE so a psycopg
+        # connection passed to enqueue(connection=...) gets the hint too.
+        if getattr(e, "sqlstate", None) != "42P01":
+            raise
+        raise SoniqError(
+            f"Soniq's tables are missing ({e}).",
+            "SONIQ_SCHEMA_MISSING",
+            suggestions=["Run 'soniq setup <module>:<instance>' once per deploy."],
         ) from e
 
 
@@ -480,6 +498,10 @@ class Soniq:
     def dashboard_data(self) -> Any:
         """Lazy per-app DashboardService (data layer). The FastAPI surface lives in soniq.dashboard.server."""
         if self._dashboard_data is None:
+            # Imported here: soniq.dashboard pulls in FastAPI, which a plain
+            # producer or worker doesn't need.
+            from .dashboard.app import DashboardService
+
             self._dashboard_data = DashboardService(self)
         return self._dashboard_data
 
@@ -790,36 +812,38 @@ class Soniq:
                             "Call enqueue() inside 'async with conn.transaction():'."
                         ],
                     )
-                txn_id = await self._backend.create_job_transactional(
-                    connection=connection,
-                    job_id=job_id,
-                    job_name=job_name,
-                    args=args,
-                    args_hash=args_hash,
-                    max_attempts=max_attempts,
-                    priority=final_priority,
-                    queue=final_queue,
-                    unique=final_unique,
-                    dedup_key=dedup_key,
-                    scheduled_at=scheduled_at,
-                    producer_id=producer_id,
-                )
+                with _schema_hint():
+                    txn_id = await self._backend.create_job_transactional(
+                        connection=connection,
+                        job_id=job_id,
+                        job_name=job_name,
+                        args=args,
+                        args_hash=args_hash,
+                        max_attempts=max_attempts,
+                        priority=final_priority,
+                        queue=final_queue,
+                        unique=final_unique,
+                        dedup_key=dedup_key,
+                        scheduled_at=scheduled_at,
+                        producer_id=producer_id,
+                    )
                 return txn_id or job_id
             no_transactional_enqueue(type(self._backend).__name__)
 
-        result_id = await self._backend.create_job(
-            job_id=job_id,
-            job_name=job_name,
-            args=args,
-            args_hash=args_hash,
-            max_attempts=max_attempts,
-            priority=final_priority,
-            queue=final_queue,
-            unique=final_unique,
-            dedup_key=dedup_key,
-            scheduled_at=scheduled_at,
-            producer_id=producer_id,
-        )
+        with _schema_hint():
+            result_id = await self._backend.create_job(
+                job_id=job_id,
+                job_name=job_name,
+                args=args,
+                args_hash=args_hash,
+                max_attempts=max_attempts,
+                priority=final_priority,
+                queue=final_queue,
+                unique=final_unique,
+                dedup_key=dedup_key,
+                scheduled_at=scheduled_at,
+                producer_id=producer_id,
+            )
 
         # No notify here: create_job already sent one with the insert.
         return result_id or job_id
@@ -955,16 +979,17 @@ class Soniq:
         job_ids = [str(uuid.uuid4()) for _ in args_list]
 
         if isinstance(self._backend, PostgresBackend):
-            await self._backend.create_jobs_bulk(
-                job_ids=job_ids,
-                job_name=job_name,
-                args_list=args_list,
-                max_attempts=max_attempts,
-                priority=final_priority,
-                queue=final_queue,
-                scheduled_at=scheduled_at,
-                producer_id=producer_id,
-            )
+            with _schema_hint():
+                await self._backend.create_jobs_bulk(
+                    job_ids=job_ids,
+                    job_name=job_name,
+                    args_list=args_list,
+                    max_attempts=max_attempts,
+                    priority=final_priority,
+                    queue=final_queue,
+                    scheduled_at=scheduled_at,
+                    producer_id=producer_id,
+                )
         else:
             for jid, args in zip(job_ids, args_list):
                 await self._backend.create_job(

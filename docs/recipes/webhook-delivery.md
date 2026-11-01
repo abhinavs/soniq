@@ -1,5 +1,5 @@
 ---
-description: Deliver webhooks reliably from Python with Soniq and PostgreSQL: HMAC-SHA256 signing, retry schedule, idempotency by event ID and transactional enqueue.
+description: "Deliver webhooks reliably from Python with Soniq and PostgreSQL: HMAC-SHA256 signing, retry schedule, idempotency by event ID and transactional enqueue."
 ---
 
 # Recipe: Webhook Delivery
@@ -148,7 +148,25 @@ Include these headers with every delivery so receivers can route, verify and ded
 | `X-Webhook-Signature` | HMAC-SHA256 signature (`sha256=...`) |
 | `User-Agent` | Your app identifier |
 
-Soniq's built-in webhook sender also sends `X-Webhook-Timestamp` (Unix seconds) and two signatures. `X-Webhook-Signature` signs the body only and is kept for existing receivers. `X-Webhook-Signature-V2` signs `f"{timestamp}.{body}"`. New receivers must verify the V2 header. They must also reject requests whose timestamp is more than a few minutes old. Otherwise an attacker can replay a captured request.
+Soniq's built-in webhook sender also sends `X-Webhook-Timestamp` (Unix seconds) and two signatures. `X-Webhook-Signature` signs the body only and is kept for existing receivers. `X-Webhook-Signature-V2` signs `f"{timestamp}.{body}"`. New receivers must verify the V2 header. They must also reject requests whose timestamp is more than a few minutes old. Otherwise an attacker can replay a captured request:
+
+```python
+import hashlib
+import hmac
+import time
+
+def verify_v2(body: bytes, headers: dict, secret: str, max_age: int = 300) -> bool:
+    timestamp = headers.get("X-Webhook-Timestamp", "")
+    if not timestamp.isdigit() or abs(time.time() - int(timestamp)) > max_age:
+        return False
+    signed = timestamp.encode() + b"." + body
+    expected = "sha256=" + hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, headers.get("X-Webhook-Signature-V2", ""))
+```
+
+Verify the raw request body, not a re-serialized copy of the parsed JSON. The bytes must match exactly.
+
+On the built-in sender, an endpoint's `max_retries` is the total number of delivery attempts, not the retries after the first one. `max_retries=3` sends at most three requests.
 
 ## Transactional enqueue
 

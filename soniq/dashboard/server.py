@@ -38,6 +38,15 @@ _SECURITY_HEADERS = {
     ),
 }
 
+# FastAPI's /docs and /redoc pages load Swagger UI and ReDoc from jsDelivr.
+_API_DOCS_CSP = (
+    "default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; img-src 'self' data: https:; "
+    "connect-src 'self'; worker-src blob:; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+
 # Postgres text can't hold NUL, so a filter with one would 500 in the driver.
 _NO_NUL = r"^[^\x00]*$"
 
@@ -133,13 +142,6 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
-    async def _security_headers(request, call_next):
-        response = await call_next(request)
-        for name, value in _SECURITY_HEADERS.items():
-            response.headers.setdefault(name, value)
-        return response
-
     # Without a key, a page the operator visits could rebind its own hostname
     # to this server and read /api/*. A Host check stops that. With a key the
     # browser can't make the request, so any hostname is fine.
@@ -194,6 +196,18 @@ def create_dashboard_app(soniq_app: "Soniq") -> "FastAPI":
                 return await call_next(request)
 
         app.add_middleware(APIKeyMiddleware)
+
+    # Added last so it wraps the Host and API-key checks and their 400/401
+    # responses get the headers too.
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        response = await call_next(request)
+        headers = _SECURITY_HEADERS
+        if request.url.path.endswith(("/docs", "/redoc")):
+            headers = {**headers, "Content-Security-Policy": _API_DOCS_CSP}
+        for name, value in headers.items():
+            response.headers.setdefault(name, value)
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home():

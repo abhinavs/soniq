@@ -1,5 +1,5 @@
 ---
-description: Write a custom RetryPolicy for Soniq Python background jobs: honor Retry-After hints, dead-letter on auth errors, or skip retries for a PostgreSQL job queue.
+description: "Write a custom RetryPolicy for Soniq Python background jobs: honor Retry-After hints, dead-letter on auth errors, or skip retries for a PostgreSQL job queue."
 ---
 
 # Recipe: Custom Retry Policy

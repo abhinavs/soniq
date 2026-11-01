@@ -7,6 +7,7 @@ Handles concurrency, heartbeat, signal handling, and cleanup.
 
 import asyncio
 import concurrent.futures
+import heapq
 import logging
 import os
 import platform
@@ -217,6 +218,27 @@ class Worker:
         # docs/_internals/contracts/shutdown.md).
         in_flight_slots: list[dict] = [{} for _ in range(concurrency)]
 
+        # A retry or snooze due before the next poll would otherwise wait
+        # for the poll, so a 1s retry ran after poll_interval. Keep the
+        # short deadlines and wake for the earliest one.
+        loop = asyncio.get_running_loop()
+        wake_at: list[float] = []
+
+        def on_reschedule(delay: float) -> None:
+            if delay < self._settings.poll_interval:
+                heapq.heappush(wake_at, loop.time() + delay)
+
+        def idle_timeout() -> float:
+            now = loop.time()
+            if wake_at and wake_at[0] <= now:
+                # It may have come due during the empty fetch: poll again now.
+                while wake_at and wake_at[0] <= now:
+                    heapq.heappop(wake_at)
+                return 0
+            if not wake_at:
+                return self._settings.poll_interval
+            return min(self._settings.poll_interval, wake_at[0] - now)
+
         async def worker_task(slot: dict):
             while not shutdown_event.is_set():
                 try:
@@ -233,6 +255,7 @@ class Worker:
                         sync_executor=self._sync_executor,
                         sync_pool_semaphore=self._sync_pool_semaphore,
                         in_flight_slot=slot,
+                        on_reschedule=on_reschedule,
                     )
 
                     if not processed:
@@ -246,7 +269,7 @@ class Worker:
 
                             done, _ = await asyncio.wait(
                                 [asyncio.create_task(t) for t in wait_tasks],
-                                timeout=self._settings.poll_interval,
+                                timeout=idle_timeout(),
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
                             # Cancel and await pending wait tasks

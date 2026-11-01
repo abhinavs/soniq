@@ -3,7 +3,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypeGuard
 
 from soniq.backends.helpers import dead_letter_row_to_dict as _dead_letter_row_to_dict
 from soniq.backends.helpers import no_transactional_enqueue, to_json
@@ -23,14 +23,16 @@ def _reject_dead_letter_status(status: Any) -> None:
         raise ValueError(_REJECT_DEAD_LETTER_MSG)
 
 
-def _still_claimed(job: Optional[dict], claimed_attempts: Optional[int]) -> bool:
+def _still_claimed(
+    job: Optional[dict[str, Any]], claimed_attempts: Optional[int]
+) -> TypeGuard[dict[str, Any]]:
     # Same check as the SQL backends: an outcome only lands on the claim
     # that produced it. None skips the check.
     if job is None:
         return False
     if claimed_attempts is None:
         return True
-    return job["status"] == "processing" and job["attempts"] == claimed_attempts
+    return bool(job["status"] == "processing" and job["attempts"] == claimed_attempts)
 
 
 class MemoryBackend:

@@ -1,5 +1,5 @@
 ---
-description: Process uploaded files in Python background jobs with Soniq: long timeouts, asyncio.to_thread for CPU-bound work, a dedicated queue and FastAPI enqueue.
+description: "Process uploaded files in Python background jobs with Soniq: long timeouts, asyncio.to_thread for CPU-bound work, a dedicated queue and FastAPI enqueue."
 ---
 
 # Recipe: File Processing

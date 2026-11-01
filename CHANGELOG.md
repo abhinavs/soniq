@@ -4,7 +4,7 @@ All notable changes to Soniq are documented in this file.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-11-01
 
 The first step towards rows that any language can read and write: code in any language can now enqueue a job with one SQL call and read its result back. See the new [Storage format](docs/reference/storage-format.md) page.
 
@@ -109,6 +109,15 @@ Run `soniq setup` once to apply migration `0006_sql_api` (or export it with `son
 - `soniq_enqueue()` rejects numbers too big for a double (they reached Python handlers as `inf`) and `max_attempts` below 1 with a hint. `max_attempts => NULL` stores NULL, so the worker uses the handler's `retries=`.
 - Install hints quote the extra (`pip install "soniq[dashboard]"`), so they work in zsh.
 - The testing guide's dead-letter example used the memory fixture and `max_retries=`. It uses `soniq_pg` and `retries=`.
+- Concurrent first calls on a fresh instance (50 enqueues in a `gather`, say) each opened their own connection pool, so a process could hold 250 connections with `pool_max_size=5`. They now share one pool. 0.1.0 had the same bug.
+- Enqueueing before `soniq setup` raises `SoniqError` with code `SONIQ_SCHEMA_MISSING` and says to run setup, instead of a raw "relation soniq_jobs does not exist".
+- A retry or snooze due before the next poll waited for that poll, so `retry_delay=1` ran after `poll_interval` (5 seconds by default). The worker now wakes when its short retries come due.
+- Webhook retries sent the payload with its keys reordered by JSONB, so the body differed from the first attempt. Every attempt sends the same bytes now, with sorted keys.
+- Dashboard: the Host-check 400 and API-key 401 responses lacked the security headers, and the page's CSP blocked FastAPI's `/docs` and `/redoc` pages. Both now work.
+- `import soniq` no longer imports FastAPI, which saves about 150 ms in processes that never start the dashboard.
+- `soniq status --jobs` shows full job names instead of cutting them at 25 characters.
+- Webhook and log statistics bucket by hour in UTC, whatever the session time zone is.
+- The docs' YAML front matter parses again in seven pages, and the storage-format and upgrade pages warn that 0.1.0 workers can't run a row with `max_attempts` set to NULL.
 
 ### Added
 

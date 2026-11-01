@@ -1,5 +1,5 @@
 ---
-description: Send transactional email as Python background jobs with Soniq and PostgreSQL: idempotent handlers, escalating retries, a dedicated queue, transactional enqueue.
+description: "Send transactional email as Python background jobs with Soniq and PostgreSQL: idempotent handlers, escalating retries, a dedicated queue, transactional enqueue."
 ---
 
 # Recipe: Email Jobs

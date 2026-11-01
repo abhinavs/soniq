@@ -14,7 +14,7 @@ Upgrading from Soniq 0.1.0 to 0.2.0 needs no downtime. Jobs in the queue keep ru
 - The `soniq_jobs.max_attempts` column default goes from 3 to 4. Python always sets the value itself, so this only matters for raw `INSERT`s that leave the column out. 4 matches what Python writes by default (`retries=3`, plus the first attempt).
 - 0.1.0 stored dead-letter `tags` as a JSON string holding an object. The migration rewrites those rows as objects, and 0.2.0 reads both shapes. 0.1.0 itself never sets tags, so only your own code calling `backend.mark_job_dead_letter(tags=...)` on 0.1.0 can write more in the old shape after the migration, and a dead-letter search by tag can miss those rows. If you do that, run the migration's `UPDATE soniq_dead_letter_jobs` statement by hand once the last 0.1.0 code is gone (`soniq migrations export --sql --from 0005` prints it). It is safe to run more than once.
 
-The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row, and the other way round.
+The row format itself didn't change. Every row 0.2.0 writes is a valid 0.1.0 row, and the other way round. The one exception is `max_attempts => NULL` in `soniq_enqueue()` or a raw `INSERT`: a 0.1.0 worker leaves such a job stuck in `processing`. Soniq never writes `NULL` itself, so this only matters for your own SQL producers. Keep them off `NULL` until the last 0.1.0 worker is gone.
 
 ## Steps
 

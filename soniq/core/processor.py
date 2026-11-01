@@ -12,7 +12,7 @@ import inspect
 import logging
 import time
 import traceback
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from soniq.backends.helpers import to_json
 from soniq.core.middleware import build_chain
@@ -223,7 +223,7 @@ async def _execute_job_safely(
             result = await run()
         return True, None, result
     except _HandlerTimeout as e:
-        return False, _format_job_error(e.__cause__), None
+        return False, _format_job_error(e.__cause__ or e), None
     except asyncio.TimeoutError:
         return False, f"Job timed out after {timeout}s", None
     except Exception as e:
@@ -273,6 +273,7 @@ async def process_job_via_backend(
     sync_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None,
     sync_pool_semaphore: Optional[asyncio.Semaphore] = None,
     in_flight_slot: Optional[dict] = None,
+    on_reschedule: Optional[Callable[[float], None]] = None,
 ) -> bool:
     """
     Process a single job using a StorageBackend.
@@ -390,6 +391,7 @@ async def process_job_via_backend(
             sync_executor=sync_executor,
             sync_pool_semaphore=sync_pool_semaphore,
             in_flight_slot=in_flight_slot,
+            on_reschedule=on_reschedule,
             job_record=job_record,
             job_meta=job_meta,
             job_id=job_id,
@@ -417,6 +419,7 @@ async def _dispatch_and_record(
     sync_executor: Optional[concurrent.futures.ThreadPoolExecutor],
     sync_pool_semaphore: Optional[asyncio.Semaphore],
     in_flight_slot: Optional[dict],
+    on_reschedule: Optional[Callable[[float], None]],
     job_record: dict,
     job_meta: dict,
     job_id: str,
@@ -502,6 +505,8 @@ async def _dispatch_and_record(
             if _reclaimed(written, job_id, "snooze"):
                 await _emit_end("reclaimed")
                 return True
+            if on_reschedule is not None and capped > 0:
+                on_reschedule(capped)
             logger.info(
                 "Job %s snoozed for %.1fs (attempts kept at %d)",
                 job_id,
@@ -612,6 +617,8 @@ async def _dispatch_and_record(
             if _reclaimed(written, job_id, "failed"):
                 await _emit_end("reclaimed")
                 return True
+            if on_reschedule is not None and retry_delay > 0:
+                on_reschedule(retry_delay)
             logger.warning(
                 f"Job {job_id} failed (attempt {attempts}), "
                 + (

@@ -1,5 +1,5 @@
 ---
-description: Glossary of Soniq terms: job, handler, task name, worker, scheduler, queue, heartbeat, dead-letter queue and at-least-once delivery for Python on PostgreSQL.
+description: "Glossary of Soniq terms: job, handler, task name, worker, scheduler, queue, heartbeat, dead-letter queue and at-least-once delivery for Python on PostgreSQL."
 ---
 
 # Soniq glossary: job, worker, queue and dead-letter terms

@@ -35,7 +35,10 @@ Turn on `asyncio_mode = "auto"` so async tests run without a marker on each test
 # pyproject.toml
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 ```
+
+The second line silences pytest-asyncio's warning about the unset fixture loop scope.
 
 The plugin gives you two fixtures:
 

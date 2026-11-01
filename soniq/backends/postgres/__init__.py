@@ -1,5 +1,6 @@
 """PostgreSQL storage backend. Uses asyncpg with FOR UPDATE SKIP LOCKED, pg_notify, and transactional enqueue."""
 
+import asyncio
 import json
 import logging
 import os
@@ -133,6 +134,10 @@ class PostgresBackend:
         self._pool_min = pool_min_size
         self._pool_max = pool_max_size
         self._pool: Optional[asyncpg.Pool] = None
+        # Serialises the first initialize() so concurrent callers share one
+        # pool. Kept per event loop, since an asyncio.Lock is tied to one.
+        self._init_lock: Optional[asyncio.Lock] = None
+        self._init_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         # register_worker kwargs by worker id, so a heartbeat that finds its
         # row deleted can put it back.
         self._registrations: dict[str, dict] = {}
@@ -159,13 +164,21 @@ class PostgresBackend:
         return True
 
     async def initialize(self) -> None:
-        if self._pool is None:
-            self._pool = await asyncpg.create_pool(
-                self._url,
-                min_size=self._pool_min,
-                max_size=self._pool_max,
-                init=_init_connection,
-            )
+        if self._pool is not None:
+            return
+        # Without the lock, 50 concurrent first enqueues each opened a pool
+        # and all but one leaked, ignoring pool_max_size.
+        loop = asyncio.get_running_loop()
+        if self._init_lock is None or self._init_lock_loop is not loop:
+            self._init_lock, self._init_lock_loop = asyncio.Lock(), loop
+        async with self._init_lock:
+            if self._pool is None:
+                self._pool = await asyncpg.create_pool(
+                    self._url,
+                    min_size=self._pool_min,
+                    max_size=self._pool_max,
+                    init=_init_connection,
+                )
 
     async def close(self) -> None:
         if self._pool is not None:

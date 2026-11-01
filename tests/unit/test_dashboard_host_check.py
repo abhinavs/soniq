@@ -61,6 +61,28 @@ def test_every_response_carries_security_headers(monkeypatch):
     assert "fonts.googleapis.com" not in client.get("/").text
 
 
+@pytest.mark.parametrize(
+    "key,host,code", [("", "evil.example.com", 400), ("k", "localhost", 401)]
+)
+def test_rejections_carry_security_headers(monkeypatch, key, host, code):
+    monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", key)
+    client = TestClient(create_dashboard_app(Soniq(backend="memory")))
+    r = client.get("/api/stats", headers={"Host": host})
+    assert r.status_code == code
+    assert r.headers["x-frame-options"] == "DENY"
+
+
+def test_api_docs_pages_may_load_their_cdn_assets(monkeypatch):
+    monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", "")
+    client = TestClient(create_dashboard_app(Soniq(backend="memory")))
+    for path in ("/docs", "/redoc"):
+        csp = client.get(path, headers={"Host": "localhost"}).headers[
+            "content-security-policy"
+        ]
+        assert "https://cdn.jsdelivr.net" in csp
+        assert "frame-ancestors 'none'" in csp
+
+
 async def test_run_dashboard_warns_when_writes_have_no_key(monkeypatch, capsys, caplog):
     from unittest import mock
 

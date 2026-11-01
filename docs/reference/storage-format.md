@@ -1,5 +1,5 @@
 ---
-description: Soniq storage format 1: PostgreSQL tables, columns and SQL functions (soniq_enqueue, soniq_get_job) to enqueue and read background jobs from any language.
+description: "Soniq storage format 1: PostgreSQL tables, columns and SQL functions (soniq_enqueue, soniq_get_job) to enqueue and read background jobs from any language."
 ---
 
 # Soniq storage format: PostgreSQL job tables and SQL API
@@ -17,7 +17,7 @@ Format 1 is a strict subset of what Soniq 0.1.0 already wrote. The shape didn't 
 - No value is a Python object turned into text. A `datetime` used to become `"2024-01-01 00:00:00+00:00"`. Now it is rejected at enqueue time.
 - No `NaN`, `Infinity` or `-Infinity`. They aren't JSON.
 
-There's no version column and no marker in the row. Every row 0.2.0 writes is also a valid 0.1.0 row, so a rolling deploy works in either direction, and so does a rollback.
+There's no version column and no marker in the row. Every row 0.2.0 writes is also a valid 0.1.0 row, so a rolling deploy works in either direction, and so does a rollback. The one exception is a row you write with `max_attempts` set to `NULL`: a 0.1.0 worker that claims it raises `TypeError` and leaves it in `processing`. Don't write `NULL` until no 0.1.0 worker is left.
 
 Rows that older versions wrote are still processed. A stringified datetime in old `args` is just a JSON string, and the handler gets that string, as it always did. These rows go away by themselves:
 
@@ -38,7 +38,7 @@ One row per job.
 | `args_hash` | `text` | Set only for unique jobs. See [`args_hash`](#args_hash). |
 | `status` | `text` | `queued`, `processing`, `done` or `cancelled`. |
 | `attempts` | `int` | How many times a worker has started this job. Insert `0`. |
-| `max_attempts` | `int` | Total attempts allowed, so retries plus one. Defaults to `4`. `NULL` makes the worker use the handler's `retries`. |
+| `max_attempts` | `int` | Total attempts allowed, so retries plus one. Defaults to `4`. `NULL` makes the worker use the handler's `retries`. 0.1.0 workers can't run such a row, so only use `NULL` once every worker runs 0.2.0. |
 | `queue` | `text` | Queue name. `default` unless you route it. |
 | `priority` | `int` | Lower runs first. Default `100`. |
 | `unique_job` | `boolean` | `true` for a unique job. |
@@ -72,7 +72,7 @@ SELECT soniq_enqueue(
   queue        => 'billing',
   priority     => 10,                          -- lower runs first, default 100
   run_at       => now() + interval '1 hour',   -- default: now
-  max_attempts => 4,                           -- retries plus one, default 4; NULL uses the handler's retries
+  max_attempts => 4,                           -- retries plus one, default 4; NULL uses the handler's retries (0.2.0+ workers only)
   unique_job   => true,
   dedup_key    => 'invoice-123',
   producer_id  => 'checkout-go',               -- default: application_name, or session_user if that's empty

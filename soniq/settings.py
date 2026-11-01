@@ -6,7 +6,7 @@ environment variables, config files, and validation.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic.fields import FieldInfo
@@ -44,7 +44,7 @@ class SoniqSettings(BaseSettings):
         extra="ignore",
     )
 
-    def __repr_args__(self):
+    def __repr_args__(self) -> Iterator[tuple[Optional[str], Any]]:
         # Keep the DB password out of repr/str (logs, tracebacks, debuggers).
         from soniq.cli._helpers import redact_url
 

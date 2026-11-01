@@ -530,8 +530,10 @@ class WebhookDispatcher:
 
         delivery.attempts += 1
 
-        # Prepare payload
-        payload_json = json.dumps(delivery.payload)
+        # Sorted keys: a retry rebuilds the payload from JSONB, which
+        # reorders keys, so every attempt must serialize the same way to
+        # send the same bytes.
+        payload_json = json.dumps(delivery.payload, sort_keys=True)
 
         # Prepare headers
         headers = {
@@ -771,7 +773,7 @@ class WebhookService:
             trends = await conn.fetch(
                 """
                 SELECT
-                    DATE_TRUNC('hour', created_at) as hour,
+                    pg_catalog.date_trunc('hour', created_at, 'UTC') as hour,
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as successful
                 FROM soniq_webhook_deliveries
