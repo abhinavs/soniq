@@ -8,12 +8,14 @@ import os
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
+    Iterator,
     List,
     Optional,
     ParamSpec,
@@ -27,16 +29,15 @@ from pydantic import ValidationError
 
 from ._deprecation import warn_deprecated
 from .backends import StorageBackend
-from .backends.helpers import no_transactional_enqueue
+from .backends.helpers import no_transactional_enqueue, to_json
 from .backends.postgres import PostgresBackend
 from .backends.postgres.migration_runner import MigrationRunner
 from .backends.sqlite import SQLiteBackend
 from .core.naming import validate_task_name
-from .core.queue import _normalize_scheduled_time
+from .core.queue import _normalize_scheduled_time, validation_summary
 from .core.registry import JobRegistry
 from .core.retry import DEFAULT_RETRY_POLICY
 from .core.worker import Worker
-from .dashboard.app import DashboardService
 from .errors import (
     SONIQ_TASK_ARGS_INVALID,
     SONIQ_UNKNOWN_TASK_NAME,
@@ -87,7 +88,7 @@ def _check_job_args(
     the handler's signature, so a typo fails now instead of on every retry.
     """
     try:
-        json.dumps(args, allow_nan=False)
+        to_json(args)
     except (TypeError, ValueError) as e:
         raise SoniqError(
             f"Arguments for task {job_name!r} must be JSON-serializable: {e}",
@@ -115,6 +116,35 @@ def _check_job_args(
         ) from e
 
 
+@contextmanager
+def _schema_hint() -> Iterator[None]:
+    """Turn 'relation soniq_jobs does not exist' into a hint to run setup."""
+    try:
+        yield
+    except Exception as e:
+        # 42P01 is undefined_table. Checked by SQLSTATE so a psycopg
+        # connection passed to enqueue(connection=...) gets the hint too.
+        if getattr(e, "sqlstate", None) != "42P01":
+            raise
+        raise SoniqError(
+            f"Soniq's tables are missing ({e}).",
+            "SONIQ_SCHEMA_MISSING",
+            suggestions=["Run 'soniq setup <module>:<instance>' once per deploy."],
+        ) from e
+
+
+def _derived_name_note(derived: str, pattern: str) -> str:
+    """Extra advice when the derived name fails task_name_pattern."""
+    if re.fullmatch(pattern, derived):
+        return ""
+    # Jobs already queued carry the derived name, so a new name would strand them.
+    return (
+        f"That name does not match task_name_pattern ({pattern!r}), so name= "
+        "rejects it. Either widen SONIQ_TASK_NAME_PATTERN to accept it, or "
+        "pick a name that matches once no jobs are queued under the old one."
+    )
+
+
 def _pool_sizing_error(
     *, concurrency: int, pool_max_size: int, pool_headroom: int
 ) -> Optional["SoniqError"]:
@@ -128,7 +158,7 @@ def _pool_sizing_error(
         f"Connection pool too small: worker concurrency ({concurrency}) "
         f"plus reserved headroom ({pool_headroom}) requires {required} "
         f"connections, but pool_max_size is {pool_max_size}. "
-        f"Raise SONIQ_POOL_MAX_SIZE, lower SONIQ_CONCURRENCY, "
+        f"Raise SONIQ_POOL_MAX_SIZE, lower --concurrency, "
         f"or reduce SONIQ_POOL_HEADROOM.",
         "SONIQ_POOL_TOO_SMALL",
         context={
@@ -399,6 +429,8 @@ class Soniq:
         # to this Soniq instance, not a global cache.
         route_map = dict(self._settings.route_map or {})
         task_name_pattern = self._settings.task_name_pattern
+        # periodic() reports a missing name= itself, pointing at the user's code.
+        from_periodic = kwargs.pop("_from_periodic", False)
 
         def decorator(
             func: Callable[_JP, Awaitable[_JR]],
@@ -410,7 +442,7 @@ class Soniq:
                 _soniq=self,
                 **kwargs,
             )
-            if kwargs.get("name") is None:
+            if kwargs.get("name") is None and not from_periodic:
                 # The derived name is a Python module path, which only Python
                 # code can produce. Rows should carry a name any language can.
                 derived: str = getattr(wrapper, "_soniq_name")
@@ -419,6 +451,7 @@ class Soniq:
                     since="0.2.0",
                     removed_in="1.0",
                     use_instead=f"@soniq.job(name={derived!r})",
+                    note=_derived_name_note(derived, task_name_pattern),
                     stacklevel=3,
                 )
             # Typing only: the runtime object is the plain wrapper function.
@@ -465,6 +498,10 @@ class Soniq:
     def dashboard_data(self) -> Any:
         """Lazy per-app DashboardService (data layer). The FastAPI surface lives in soniq.dashboard.server."""
         if self._dashboard_data is None:
+            # Imported here: soniq.dashboard pulls in FastAPI, which a plain
+            # producer or worker doesn't need.
+            from .dashboard.app import DashboardService
+
             self._dashboard_data = DashboardService(self)
         return self._dashboard_data
 
@@ -487,7 +524,17 @@ class Soniq:
         sched_args = job_kwargs.pop("schedule_args", None)
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            wrapped: Any = self.job(**job_kwargs)(func)
+            wrapped: Any = self.job(_from_periodic=True, **job_kwargs)(func)
+            if job_kwargs.get("name") is None:
+                derived: str = getattr(wrapped, "_soniq_name")
+                warn_deprecated(
+                    f"Deriving the periodic job name {derived!r} from the module path",
+                    since="0.2.0",
+                    removed_in="1.0",
+                    use_instead=f"@soniq.periodic(..., name={derived!r})",
+                    note=_derived_name_note(derived, self._settings.task_name_pattern),
+                    stacklevel=3,
+                )
             retries = job_kwargs.get("retries")
             wrapped._soniq_periodic = {
                 "cron": schedule_value if schedule_type == "cron" else None,
@@ -661,7 +708,7 @@ class Soniq:
                 ref.args_model(**args)
             except ValidationError as e:
                 raise SoniqError(
-                    f"Invalid arguments for task {job_name!r}: {e}",
+                    f"Invalid arguments for task {job_name!r}: {validation_summary(e)}",
                     SONIQ_TASK_ARGS_INVALID,
                     context={"task_name": job_name},
                 ) from e
@@ -703,7 +750,7 @@ class Soniq:
                     args_model(**args)
                 except ValidationError as e:
                     raise SoniqError(
-                        f"Invalid arguments for task {job_name!r}: {e}",
+                        f"Invalid arguments for task {job_name!r}: {validation_summary(e)}",
                         SONIQ_TASK_ARGS_INVALID,
                         context={"task_name": job_name},
                     ) from e
@@ -729,7 +776,11 @@ class Soniq:
             max_attempts = self._settings.max_retries + 1
 
         scheduled_at = _normalize_scheduled_time(scheduled_at)
-        args_hash = compute_args_hash(args) if final_unique else None
+        # Hash the args as they will be stored: {1: "a"} is stored as
+        # {"1": "a"}, and mixed int/str keys can't be sorted as-is.
+        args_hash = (
+            compute_args_hash(json.loads(to_json(args))) if final_unique else None
+        )
         job_id = str(uuid.uuid4())
 
         producer_id = resolve_producer_id(self._settings.producer_id)
@@ -746,47 +797,55 @@ class Soniq:
                     from .integrations.sqlalchemy import to_asyncpg_connection
 
                     connection = await to_asyncpg_connection(connection)
-                txn_id = await self._backend.create_job_transactional(
-                    connection=connection,
-                    job_id=job_id,
-                    job_name=job_name,
-                    args=args,
-                    args_hash=args_hash,
-                    max_attempts=max_attempts,
-                    priority=final_priority,
-                    queue=final_queue,
-                    unique=final_unique,
-                    dedup_key=dedup_key,
-                    scheduled_at=scheduled_at,
-                    producer_id=producer_id,
-                )
+                elif (
+                    isinstance(connection, asyncpg.Connection)
+                    and not connection.is_in_transaction()
+                ):
+                    # Same rule as the SQLAlchemy path: outside a transaction
+                    # the insert would autocommit and not be atomic.
+                    raise SoniqError(
+                        "The asyncpg connection passed as enqueue(connection=...) "
+                        "has no active transaction, so the job would not be "
+                        "atomic with your writes.",
+                        "SONIQ_UNSUPPORTED_CONNECTION",
+                        suggestions=[
+                            "Call enqueue() inside 'async with conn.transaction():'."
+                        ],
+                    )
+                with _schema_hint():
+                    txn_id = await self._backend.create_job_transactional(
+                        connection=connection,
+                        job_id=job_id,
+                        job_name=job_name,
+                        args=args,
+                        args_hash=args_hash,
+                        max_attempts=max_attempts,
+                        priority=final_priority,
+                        queue=final_queue,
+                        unique=final_unique,
+                        dedup_key=dedup_key,
+                        scheduled_at=scheduled_at,
+                        producer_id=producer_id,
+                    )
                 return txn_id or job_id
             no_transactional_enqueue(type(self._backend).__name__)
 
-        result_id = await self._backend.create_job(
-            job_id=job_id,
-            job_name=job_name,
-            args=args,
-            args_hash=args_hash,
-            max_attempts=max_attempts,
-            priority=final_priority,
-            queue=final_queue,
-            unique=final_unique,
-            dedup_key=dedup_key,
-            scheduled_at=scheduled_at,
-            producer_id=producer_id,
-        )
+        with _schema_hint():
+            result_id = await self._backend.create_job(
+                job_id=job_id,
+                job_name=job_name,
+                args=args,
+                args_hash=args_hash,
+                max_attempts=max_attempts,
+                priority=final_priority,
+                queue=final_queue,
+                unique=final_unique,
+                dedup_key=dedup_key,
+                scheduled_at=scheduled_at,
+                producer_id=producer_id,
+            )
 
-        if self._backend.supports_push_notify:
-            try:
-                await self._backend.notify_new_job(final_queue)
-            except Exception:
-                logger.debug(
-                    "notify_new_job failed for queue %s; workers will pick up via poll",
-                    final_queue,
-                    exc_info=True,
-                )
-
+        # No notify here: create_job already sent one with the insert.
         return result_id or job_id
 
     async def enqueue_many(
@@ -844,7 +903,7 @@ class Soniq:
                     ref.args_model(**args)
                 except ValidationError as e:
                     raise SoniqError(
-                        f"Invalid arguments for task {job_name!r} at index {i}: {e}",
+                        f"Invalid arguments for task {job_name!r} at index {i}: {validation_summary(e)}",
                         SONIQ_TASK_ARGS_INVALID,
                         context={"task_name": job_name, "index": i},
                     ) from e
@@ -888,7 +947,7 @@ class Soniq:
                         args_model(**args)
                     except ValidationError as e:
                         raise SoniqError(
-                            f"Invalid arguments for task {job_name!r} at index {i}: {e}",
+                            f"Invalid arguments for task {job_name!r} at index {i}: {validation_summary(e)}",
                             SONIQ_TASK_ARGS_INVALID,
                             context={"task_name": job_name, "index": i},
                         ) from e
@@ -920,16 +979,17 @@ class Soniq:
         job_ids = [str(uuid.uuid4()) for _ in args_list]
 
         if isinstance(self._backend, PostgresBackend):
-            await self._backend.create_jobs_bulk(
-                job_ids=job_ids,
-                job_name=job_name,
-                args_list=args_list,
-                max_attempts=max_attempts,
-                priority=final_priority,
-                queue=final_queue,
-                scheduled_at=scheduled_at,
-                producer_id=producer_id,
-            )
+            with _schema_hint():
+                await self._backend.create_jobs_bulk(
+                    job_ids=job_ids,
+                    job_name=job_name,
+                    args_list=args_list,
+                    max_attempts=max_attempts,
+                    priority=final_priority,
+                    queue=final_queue,
+                    scheduled_at=scheduled_at,
+                    producer_id=producer_id,
+                )
         else:
             for jid, args in zip(job_ids, args_list):
                 await self._backend.create_job(

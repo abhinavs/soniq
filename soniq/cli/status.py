@@ -96,12 +96,14 @@ async def handle_status(args) -> int:
                 recent_jobs = await app.list_jobs(limit=10)
                 if recent_jobs:
                     print(f"\nRecent Jobs ({len(recent_jobs)}):")
-                    print(f"{'ID'[:8]:<8} {'Name':<25} {'Status':<12} {'Queue':<10}")
-                    print("-" * 60)
+                    # Full names: the last segment alone makes a.process and
+                    # b.process look the same.
+                    width = max(25, *(len(j["job_name"]) for j in recent_jobs))
+                    print(f"{'ID':<8} {'Name':<{width}} {'Status':<12} {'Queue':<10}")
+                    print("-" * (35 + width))
                     for job in recent_jobs:
-                        job_name = job["job_name"].split(".")[-1]
                         print(
-                            f"{job['id'][:8]:<8} {job_name:<25} "
+                            f"{job['id'][:8]:<8} {job['job_name']:<{width}} "
                             f"{job['status']:<12} {job['queue']:<10}"
                         )
                 else:

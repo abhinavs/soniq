@@ -1,8 +1,12 @@
-# 5. Queues
+---
+description: Route Soniq background jobs to named queues and priorities, and run dedicated worker pools per queue with soniq worker --queues. Includes queue stats.
+---
+
+# 5. Route jobs with named queues and priorities
 
 > **Intermediate** - 6 minutes. Routing jobs to dedicated worker pools.
 
-Queues let you separate jobs by workload type and control which workers process them.
+A Soniq queue is a named group of jobs. Use queues to separate jobs by workload type and to choose which workers run them. Jobs go to the `default` queue unless you name another.
 
 ## Named queues
 
@@ -17,7 +21,7 @@ async def send_welcome_email(user_id: int):
 async def charge_subscription(account_id: str, amount: int):
     ...
 
-@soniq.job  # defaults to "default" queue
+@soniq.job(name="images.process_thumbnail")  # defaults to "default" queue
 async def process_thumbnail(image_id: str):
     ...
 ```
@@ -30,14 +34,13 @@ await soniq.enqueue(send_welcome_email, user_id=42, queue="urgent")
 
 ## Priority ordering
 
-Within a queue, jobs are processed by priority. Lower number means higher priority. Jobs with the same priority are processed in FIFO order.
+Within a queue, workers claim jobs by priority. A lower number means a higher priority. Jobs with the same priority run in the order that they became ready (first in, first out).
 
 | Priority | Typical use |
 | --- | --- |
-| 1 | Urgent -- user-facing, time-sensitive |
-| 10 | High -- important but not blocking |
-| 50 | Normal -- default for most workloads |
-| 100 | Default -- the `@soniq.job` default |
+| 1 | Urgent - user-facing, time-sensitive |
+| 10 | High - important but not blocking |
+| 100 | Default - the `@soniq.job()` default |
 
 ```python
 @soniq.job(name="billing.charge_subscription", queue="billing", priority=10)
@@ -50,9 +53,9 @@ await soniq.enqueue(charge_subscription, account_id="acct_123", amount=999, prio
 
 ## Running workers on specific queues
 
-**Default behaviour: a worker processes all queues.** Run `soniq worker` with no flags and the worker pulls jobs from every queue in your database. There is no "process everything" shorthand because that's already the default.
+By default, a worker processes all queues. If you run `soniq worker` with no `--queues` flag, the worker claims jobs from every queue in your database.
 
-To restrict a worker to a named subset, pass `--queues`:
+To limit a worker to some queues, pass `--queues`:
 
 ```bash
 # Process only email and billing jobs
@@ -62,22 +65,23 @@ soniq worker --queues emails,billing
 soniq worker --queues urgent --concurrency 8
 ```
 
-Run two distinct worker processes, one per queue group:
+To run one worker process for each queue group, start two workers:
 
 ```bash
 soniq worker --queues emails,billing --concurrency 4
 soniq worker --queues urgent --concurrency 8
 ```
 
-This lets you scale queue capacity independently. Run more email workers during peak hours, or dedicate a fast machine to your billing queue.
+Now you can scale each queue on its own. For example, run more email workers at peak hours, or give your billing queue a fast machine.
 
 ## Queue stats
 
 ```python
 stats = await soniq.get_queue_stats()
-for queue in stats:
-    print(f"{queue['queue']}: {queue['queued']} queued, {queue['processing']} processing")
+print(stats)  # {'total': ..., 'queued': ..., 'processing': ..., 'done': ..., 'dead_letter': ..., 'cancelled': ...}
 ```
+
+`get_queue_stats()` returns job counts for the whole instance, not one count per queue. To list the jobs in one queue, use `soniq.list_jobs(queue="billing", status="queued")`.
 
 From the CLI:
 
@@ -87,8 +91,12 @@ soniq status
 
 ## Design advice
 
-**Split by workload type.** Keep CPU-bound image processing separate from fast email sends. This prevents slow jobs from blocking quick ones.
+**Split by workload type.** Keep CPU-bound image processing apart from fast email sends. Then slow jobs cannot block quick jobs.
 
-**Keep payloads small.** Pass IDs, not blobs. Instead of enqueuing a 10MB CSV, store it somewhere and pass the storage key. Job arguments are serialized as JSON in the database.
+**Keep payloads small.** Pass IDs, not large data. Do not enqueue a 10 MB CSV. Store the file elsewhere and pass its storage key. Soniq stores job arguments as JSON in the database.
 
-**Run dedicated worker groups per queue.** A worker group is a set of processes that share the same `--queues` flag. This gives you independent scaling and failure isolation -- a crash in image processing won't affect your email workers.
+**Run a worker group for each queue.** A worker group is a set of processes that use the same `--queues` flag. Each group scales on its own and fails on its own. A crash in image processing does not affect your email workers.
+
+## Next steps
+
+Continue with [chapter 6: transactional enqueue](06-transactional-enqueue.md).

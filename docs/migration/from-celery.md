@@ -1,8 +1,12 @@
-# Migrate from Celery
+---
+description: Migrate from Celery to Soniq, a Python background job library that uses PostgreSQL instead of Redis or RabbitMQ. Concept map, code changes, gaps.
+---
 
-This guide is for teams running Celery (with Redis or RabbitMQ as the broker) who want to move to Soniq. Celery's API surface is large and idiomatic, so this migration takes more thought than the RQ one. The good news is that nearly every Celery concept has a direct equivalent in Soniq - the differences are mostly that Soniq is async-first and that some Celery features (chains, chords, multiple result backends) are deliberately not in scope.
+# Migrate from Celery to Soniq (Python jobs on PostgreSQL)
 
-Treat this as a rewrite at the call sites: `task.delay(arg)` becomes `await soniq.enqueue(task, arg=arg)`, `@app.task` becomes `@soniq.job(...)`. The migration sequence below assumes a clean cutover.
+Soniq is a Celery alternative for Python teams that already run PostgreSQL. It replaces the Redis or RabbitMQ broker and the result backend with one Postgres database, and its workers run on `asyncio`. Most Celery tasks move over by changing the decorator, the enqueue call and the worker command. Soniq has no chains, chords, groups, pickle serialisation or `bind=True`, so check the list near the end of this page first.
+
+Treat the migration as a rewrite at the call sites: `task.delay(arg)` becomes `await soniq.enqueue(task, arg=arg)`, and `@app.task` becomes `@soniq.job(name=...)`. You can move one module at a time, because Celery and Soniq share no state.
 
 ## Concept map
 
@@ -11,10 +15,10 @@ The fast version. Every row is expanded in the sections that follow.
 | Celery | Soniq | Notes |
 |---|---|---|
 | `Celery("app", broker="redis://...")` | `Soniq(database_url="postgresql://...")` | No broker. Jobs live in your Postgres. |
-| `@app.task` | `@soniq.job()` | Always called with parentheses. |
-| `@app.task(bind=True, max_retries=5)` | `@soniq.job(retries=5)` | No `bind=True` - hooks replace `self`. See "Hooks vs `bind=True`". |
+| `@app.task` | `@soniq.job(name="...")` | Always called with parentheses. Always pass `name=`. |
+| `@app.task(bind=True, max_retries=5)` | `@soniq.job(retries=5)` | No `bind=True` - use `JobContext` or hooks. See "Hooks and JobContext instead of `bind=True`". |
 | `task.delay(arg)` | `await soniq.enqueue(task, arg=arg)` | Always `await`ed. Keyword-only args. |
-| `task.apply_async(args=[...], kwargs={...}, countdown=30)` | `await soniq.enqueue(task, ..., scheduled_at=30)` | Soniq's `enqueue` is the one entry point. |
+| `task.apply_async(args=[...], kwargs={...}, countdown=30)` | `await soniq.enqueue(task, ..., scheduled_at=30)` | A number is seconds from now. |
 | `task.apply_async(eta=datetime)` | `await soniq.enqueue(task, scheduled_at=datetime, ...)` | |
 | `task.apply_async(queue="urgent")` | `await soniq.enqueue(task, queue="urgent", ...)` | Or set `queue=` on `@soniq.job(...)` for a default. |
 | `result = task.delay(...); result.get()` | `result = await soniq.get_result(job_id)` | See "Results and the result backend". |
@@ -23,14 +27,14 @@ The fast version. Every row is expanded in the sections that follow.
 | `celery -A app worker -Q urgent,default` | `soniq worker --queues urgent,default` | |
 | `celery -A app beat` | `soniq scheduler` + `@soniq.periodic(...)` | Beat replaced by a leader-elected scheduler service. |
 | `celery -A app inspect active` | `soniq inspect` | |
-| Flower | `soniq dashboard` | Built in, runs on port 8000 by default. |
+| Flower | `soniq dashboard` | Built in, runs on port 6161 by default. |
 | `chain(a.s(), b.s(), c.s())` | Not supported. Enqueue the next job from the previous one's body. | |
-| `chord(group, callback)` | Not supported. Use a counter row + a finaliser job. | |
-| `@app.task(autoretry_for=(IOError,), retry_backoff=True)` | `@soniq.job(retries=N, retry_backoff=True, retry_delay=N)` | Soniq retries on every uncaught exception by default; narrow it inside the handler if you need to. |
+| `chord(group, callback)` | Not supported. Use a counter row and a finaliser job. | |
+| `@app.task(autoretry_for=(IOError,), retry_backoff=True)` | `@soniq.job(retries=N, retry_backoff=True, retry_delay=N)` | Soniq retries on every uncaught exception (default `retries=3`). Catch an exception in the handler to skip the retry. |
 
 ## App and broker: there is no broker
 
-Celery makes you pick a broker. Soniq doesn't - your Postgres is the broker.
+Celery needs a broker. Soniq has none. Your Postgres database is the queue.
 
 ```python
 # before
@@ -42,7 +46,7 @@ from soniq import Soniq
 soniq = Soniq(database_url=os.environ["DATABASE_URL"])
 ```
 
-Two things to notice:
+Note two differences:
 
 - **No separate result backend.** Soniq stores results in the same `soniq_jobs` row as the job itself (in a `result` JSONB column). If you previously relied on a separate Redis instance for `backend=`, that infrastructure goes away.
 - **The `database_url` is almost certainly already in your `.env`** for your ORM. The migration usually deletes `BROKER_URL` and `RESULT_BACKEND` rather than adding anything.
@@ -79,9 +83,9 @@ async def process_payment(order_id: int):
 
 Notes:
 
-- **`async def` is preferred.** Soniq workers run on `asyncio`; sync handlers still work but run on a bounded thread pool, so you pay a context-switch and a thread slot per job.
-- **No `bind=True`.** In Celery, `bind=True` gives you `self` so you can call `self.retry(...)` or read `self.request.id`. In Soniq, retries happen automatically on raised exceptions, and contextual data (current job id, attempt number, registered metadata) is available through hooks rather than a per-task `self`. See "Hooks vs `bind=True`" below.
-- **Type hints matter.** Pair `@soniq.job(validate=MyArgsModel)` with a Pydantic model to validate args at enqueue time - Celery has no equivalent and it catches a lot of "wrong shape" bugs in CI.
+- **`async def` is preferred.** Soniq workers run on `asyncio`. Sync handlers also work, but they run on a bounded thread pool (8 threads per Soniq instance by default), so each sync job uses a thread slot.
+- **No `bind=True`.** In Celery, `bind=True` gives you `self` so you can call `self.retry(...)` or read `self.request.id`. In Soniq, a raised exception triggers the retry. To read the job id or attempt number, declare a `ctx: JobContext` parameter or register hooks. See "Hooks and JobContext instead of `bind=True`".
+- **Enqueue validates arguments.** Soniq checks the keyword arguments against the handler signature at enqueue time. Pass `validate=MyArgsModel` (a Pydantic model) to check them against a model instead.
 
 ### Retries
 
@@ -108,11 +112,11 @@ async def fetch(url: str):
         return (await client.get(url)).json()
 ```
 
-If you want to suppress retries for a specific exception class, catch it in the handler and return normally - "completed without raising" is what Soniq treats as success.
+To skip the retry for a specific exception class, catch it in the handler and return normally. Soniq treats "completed without raising" as success.
 
 ## Enqueueing: `delay` / `apply_async` -> `enqueue`
 
-Celery has two: `task.delay(*args, **kwargs)` (positional + kwargs, no options) and `task.apply_async(args=[...], kwargs={...}, **options)` (everything explicit). Soniq has one: `await soniq.enqueue(task, **kwargs)`.
+Celery has two entry points: `task.delay(*args, **kwargs)` (no options) and `task.apply_async(args=[...], kwargs={...}, **options)`. Soniq has one: `await soniq.enqueue(task, **kwargs)`. A job object also has `await task.enqueue(**kwargs)` and `await task.options(queue="urgent").enqueue(**kwargs)`.
 
 ```python
 # before
@@ -137,25 +141,25 @@ await soniq.enqueue(
 )
 ```
 
-Three differences worth flagging:
+Three differences:
 
-- **`enqueue` is async.** Every call is `await`ed. If your producer code is sync (a Django view, a Click command), wrap it - `asyncio.run(soniq.enqueue(...))` for one-shot scripts, or use Soniq's sync helper if you have a long-lived sync producer.
-- **Job arguments are keyword-only.** `await soniq.enqueue(send_email, "dev@example.com")` is not valid. Pass `to="dev@example.com"`. The keyword-only style means there's never ambiguity between Soniq's framework options (`queue`, `delay`, `priority`) and your job's arguments.
-- **`countdown` is `delay`.** Same semantics, different name. `eta` is `scheduled_at` and accepts a `datetime`.
+- **`enqueue` is async.** Every call needs `await`. If your producer code is sync (a Django view, a Click command), wrap the call in `asyncio.run(soniq.enqueue(...))`. This suits one-shot scripts. Soniq has no sync enqueue helper, so a long-lived sync framework needs an async producer.
+- **Job arguments are keyword-only.** `await soniq.enqueue(send_email, "dev@example.com")` is not valid. Pass `to="dev@example.com"`. The keyword-only style separates Soniq options (`queue`, `priority`, `scheduled_at`) from your job arguments.
+- **`countdown` is `scheduled_at` with a number or a `timedelta`.** `eta` is `scheduled_at` with a timezone-aware `datetime`. Soniq rejects naive datetimes. There is no `delay=` option.
 
 ### Cross-service enqueue
 
-If your producer lives in a different service from your worker (so it can't import the task function), Soniq lets you enqueue by string task name:
+If your producer lives in a different service from your worker (so it can't import the task function), Soniq can enqueue by string job name. Put the job arguments in `args=`:
 
 ```python
-await soniq.enqueue("billing.tasks.send_invoice", order_id=123)
+await soniq.enqueue("billing.send_invoice", args={"order_id": 123})
 ```
 
-Celery requires the same setup via `app.send_task("billing.tasks.send_invoice", kwargs={"order_id": 123})`. Same idea, friendlier surface.
+Celery does the same with `app.send_task("billing.tasks.send_invoice", kwargs={"order_id": 123})`. By default Soniq raises `SONIQ_UNKNOWN_TASK_NAME` if the producer has not registered the name. See [Cross-service jobs](../guides/cross-service-jobs.md) for the producer settings.
 
 ## Job lifecycle and statuses
 
-Celery exposes an open-ended set of states (`PENDING / STARTED / SUCCESS / FAILURE / RETRY / REVOKED / ...`) and `PENDING` famously means "we have no idea". Soniq's contract is tighter:
+Celery has many states (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`, `RETRY`, `REVOKED`). `PENDING` also covers task ids that Celery does not know. Soniq has four stored states:
 
 | Soniq status | Meaning |
 |---|---|
@@ -166,28 +170,28 @@ Celery exposes an open-ended set of states (`PENDING / STARTED / SUCCESS / FAILU
 
 There is no `failed` row state. A failure either re-queues the job (back to `queued`) or, after exhausting retries, moves it into a separate `soniq_dead_letter_jobs` table. The dead-letter table is durable, queryable, and replayable via `soniq.dead_letter.replay(dlq_id)`. `soniq.get_job(job_id)` still finds a dead-lettered job and reports its `status` as `"dead_letter"`.
 
-This is closer to RQ's lifecycle than Celery's, and it has one important consequence: **`status="queued"` does not distinguish "not yet picked up" from "we have never heard of this job"**. If you want strict "did this job ever exist" semantics, store the `job_id` you got back from `enqueue` and use `soniq.get_job(job_id)` - that returns `None` for unknown ids.
+Unlike Celery, an unknown id is not reported as pending. `soniq.get_job(job_id)` returns `None` for an id that does not exist. Store the `job_id` that `enqueue` returns.
 
 ## Results and the result backend
 
-Celery's result backend is a separate Redis (or database) where `task.delay(...).get()` polls for outputs. Soniq stores the return value in the same row as the job, in `soniq_jobs.result` (`JSONB`). To read it:
+Celery's result backend is a separate store (Redis, a database and others) that `task.delay(...).get()` reads. Soniq stores the return value in the same row as the job, in `soniq_jobs.result` (`JSONB`). To read it:
 
 ```python
 job_id = await soniq.enqueue(compute_total, order_id=123)
 # ... later ...
-result = await soniq.get_result(job_id)         # returns the value or None
+result = await soniq.get_result(job_id)         # the value, or None if the job is not done
 job = await soniq.get_job(job_id)               # returns the full row dict
 ```
 
-A few caveats vs. Celery:
+Differences from Celery:
 
-- **Return values must be JSON-serialisable.** Celery's default serialisers (pickle, JSON) handle more shapes; Soniq is JSON-only on purpose. Return dicts, lists, strings, numbers, booleans - or persist large outputs to S3/Postgres yourself and return a reference.
-- **There is no blocking `.get(timeout=...)`.** Async polling is your tool: `await asyncio.wait_for(_poll(job_id), timeout=30)`. We deliberately don't ship a blocking helper because most "I want to wait for this job" patterns are an anti-pattern in async code (you've turned a queue into an RPC).
-- **Results live as long as the job row.** Set up a retention policy (`SONIQ_DONE_JOB_RETENTION_DAYS`) if you produce a lot of jobs.
+- **Return values must be JSON-serialisable.** Celery 4 and later default to JSON, and Celery can also use pickle. Soniq is JSON-only. If a return value is not JSON, the job still completes and the stored result is `None`. Return dicts, lists, strings, numbers and booleans, or store large outputs in S3 or Postgres and return a reference.
+- **There is no blocking `.get(timeout=...)`.** Poll with `soniq.get_result` inside `asyncio.wait_for`. Soniq does not ship a blocking helper, because waiting for a job turns a queue into an RPC.
+- **Results expire.** Soniq deletes a completed job after `result_ttl` seconds. The default is 300 (5 minutes), and `SONIQ_RESULT_TTL` sets it. Read the result within that time, or store it yourself.
 
 ## Periodic tasks: Beat -> the scheduler
 
-Celery's Beat is a separate process that lives in its own deployment slot, often with its own headaches around clock drift and the "two beats running at once" failure mode. Soniq replaces it with a `soniq scheduler` service that uses a Postgres advisory lock for leader election - run two or three replicas if you want failover, only one will fire jobs at a time.
+Celery Beat is a separate process, and running two Beats at once duplicates tasks. Soniq replaces it with the `soniq scheduler` service. The schedulers elect a leader with a Postgres advisory lock. You can run several replicas for failover, and only the leader fires jobs.
 
 ```python
 # before
@@ -201,37 +205,47 @@ app.conf.beat_schedule = {
 
 ```python
 # after
-@soniq.periodic(cron="0 * * * *")
+@soniq.periodic(cron="0 * * * *", name="reports.hourly_rollup")
 async def rollup():
     ...
 
 # also valid:
-@soniq.periodic(every=timedelta(minutes=15))
+@soniq.periodic(every=timedelta(minutes=15), name="cache.warm_caches")
 async def warm_caches():
     ...
 ```
 
-Both `cron=` and `every=` are accepted; they're mutually exclusive on a single registration.
+Pass exactly one of `cron=` (a 5-field cron expression) or `every=`. The scheduler does nothing until you run `soniq scheduler`.
 
-## Hooks vs `bind=True`
+## Hooks and JobContext instead of `bind=True`
 
-If you used `self.request.id`, `self.retries`, or other request-context fields in Celery, you'll want Soniq's hooks:
+If you used `self.request.id` or `self.request.retries` in Celery, use a `ctx: JobContext` parameter. It has `job_id`, `job_name`, `attempt`, `max_attempts`, `queue`, `worker_id`, `scheduled_at` and `created_at`. Do not pass it when you enqueue.
+
+```python
+from soniq import JobContext
+
+@soniq.job(name="payments.process_payment")
+async def process_payment(order_id: int, ctx: JobContext):
+    logger.info("processing", job_id=ctx.job_id, attempt=ctx.attempt)
+```
+
+Hooks run around every job. Soniq calls them with positional arguments, in this order:
 
 ```python
 @soniq.before_job
-async def log_start(ctx):
-    logger.info("starting", job_id=ctx.job_id, attempt=ctx.attempts)
+async def log_start(job_name, job_id, attempt):
+    logger.info("starting", job_id=job_id, attempt=attempt)
 
 @soniq.after_job
-async def log_done(ctx):
-    logger.info("done", job_id=ctx.job_id, duration_ms=ctx.duration_ms)
+async def log_done(job_name, job_id, duration_ms):
+    logger.info("done", job_id=job_id, duration_ms=duration_ms)
 
 @soniq.on_error
-async def report(ctx, exc):
-    sentry_sdk.capture_exception(exc, extras={"job_id": ctx.job_id})
+async def report(job_name, job_id, error, attempt):
+    sentry_sdk.capture_message(error, extras={"job_id": job_id})
 ```
 
-Hooks fire around every job, so you don't repeat `self.request.id` boilerplate inside each handler. The `ctx` object carries job id, task name, attempt number, queue, args, and timing.
+A failing hook is logged and ignored. It never blocks the job.
 
 ## Workers: `celery worker` -> `soniq worker`
 
@@ -239,50 +253,53 @@ The CLI shapes line up cleanly:
 
 | Celery | Soniq |
 |---|---|
-| `celery -A myapp worker --loglevel=info` | `SONIQ_JOBS_MODULES=myapp.jobs soniq worker` |
+| `celery -A myapp worker --loglevel=info` | `soniq worker myapp.jobs:soniq` |
 | `celery -A myapp worker -Q urgent,default` | `soniq worker --queues urgent,default` |
 | `celery -A myapp worker -c 8` | `soniq worker --concurrency 8` |
 | `celery -A myapp worker --max-tasks-per-child=100` | not needed - Soniq workers don't fork |
-| `celery -A myapp inspect active` | `soniq inspect` |
-| `celery -A myapp inspect stats` | `soniq inspect` |
-| `celery -A myapp control shutdown` | `SIGTERM` (graceful), `SIGKILL` (immediate) |
+| `celery -A myapp inspect active` | `soniq status --jobs` (lists jobs; `soniq inspect` lists workers) |
+| `celery -A myapp inspect stats` | `soniq inspect` or `soniq status` |
+| `celery -A myapp control shutdown` | Send `SIGTERM` to the worker process |
 
-A few model differences:
+Model differences:
 
-- **No prefork pool.** Celery's `--pool=prefork` exists because Python sync code blocks the event loop; Soniq is async-first, so concurrency comes from `asyncio` tasks rather than child processes. If you have CPU-bound work, run multiple worker processes (one per core), each at low concurrency.
-- **Sync handlers are bounded.** They run on a thread pool whose size you set per-worker. There's no `--max-tasks-per-child`.
-- **`SONIQ_JOBS_MODULES`** is the equivalent of `-A myapp` - a comma-separated list of module paths the worker imports so registrations execute. Either set the env var or pass `--jobs-modules`.
+- **No prefork pool.** Soniq concurrency comes from `asyncio` tasks, not child processes. For CPU-bound work, run one worker process per core, each at low concurrency.
+- **Sync handlers are bounded.** They run on a thread pool of `sync_handler_pool_size` threads (default 8, env `SONIQ_SYNC_HANDLER_POOL_SIZE`). There is no `--max-tasks-per-child`.
+- **The app path replaces `-A myapp`.** `soniq worker myapp.jobs:soniq` imports the module so the `@soniq.job()` decorators register. Without an app path, set `SONIQ_JOBS_MODULES` (comma-separated module paths) or pass `--jobs-modules`.
+- **Delivery is at-least-once.** If a worker crashes mid-job, another worker runs the job again. Write idempotent handlers, as you would with Celery `acks_late`.
 
 ## Things Celery has that Soniq does not
 
-Be honest about this before you start the migration. If your codebase leans heavily on these, the migration is more work, or it's the wrong call:
+Check this list before you start. If your code depends heavily on these features, the migration needs more work, or Celery is the better fit:
 
-- **Chains, chords, groups.** Soniq has no built-in `a | b | c` or "wait for these N jobs, then run this finaliser" constructs. The straightforward replacement is "the last step of job A enqueues job B" for chains, and "increment a counter row, fire the finaliser when it hits N" for chords. This is fine for most pipelines and clarifies what's actually happening, but it's more code than `chain(...)`.
-- **Multiple result backends.** Soniq stores results in `soniq_jobs.result`. There is no Redis/Memcached/database-backend choice.
-- **Pickle serialisation.** Soniq is JSON-only. If you pickle complex objects, you'll need to serialise differently or persist them out-of-band.
-- **`task.signature(...)` / `.s(...)` partials.** Build the kwargs dict yourself and pass it to `enqueue`.
-- **Worker remote control (`broadcast`, `cancel_consumer`, etc.).** Out of scope. Send a `SIGTERM`.
-- **`task_routes` config-driven routing.** Soniq picks the queue from the decorator (`@soniq.job(queue=...)`) or the `enqueue` call (`queue=...`). There is no separate routing config layer.
+- **Chains, chords, groups.** Soniq has no `a | b | c` and no "wait for N jobs, then run a callback". For a chain, the last step of job A enqueues job B. For a chord, each job increments a counter row, and the job that reaches N enqueues the finaliser. This is more code than `chain(...)`.
+- **Multiple result backends.** Soniq stores results in `soniq_jobs.result`. There is no backend choice.
+- **Pickle serialisation.** Soniq is JSON-only. Serialise complex objects yourself, or store them outside the queue.
+- **`task.signature(...)` and `.s(...)` partials.** Build the kwargs dict yourself and pass it to `enqueue`.
+- **Worker remote control (`broadcast`, `cancel_consumer`).** Send `SIGTERM` instead.
+- **Config-driven `task_routes`.** Soniq takes the queue from the decorator (`queue=`) or the `enqueue` call. A consumer-side `route_map` setting maps a name prefix to a queue.
+- **Exactly-once delivery.** Neither Celery nor Soniq offers it. Postgres alone cannot guarantee it.
+- **Other brokers and ecosystem.** Soniq works only with PostgreSQL (plus SQLite and in-memory backends for tests). Celery has a larger community and more integrations.
 
 ## Migration sequence
 
-The path that's worked for teams:
+Celery and Soniq share no state, so you can move one module at a time.
 
-1. **Install Soniq alongside Celery.** Both can coexist - they don't share state.
-2. **Run `soniq setup`** against your Postgres database. This creates all soniq-owned tables in one shot.
-3. **Pick a low-stakes job module first.** Something idempotent, with low traffic, and not on the critical path. Convert its tasks: `@app.task` -> `@soniq.job()`, sync -> `async def`, `task.delay(...)` -> `await soniq.enqueue(...)`.
-4. **Run a Soniq worker for that queue** alongside your existing Celery workers. Keep enqueueing into both for one deploy if you want a safety net, but it's usually cleaner to flip the call sites and only enqueue into Soniq.
-5. **Bake.** Watch the dashboard, watch your error tracker, watch latency. A week is a sensible soak.
-6. **Migrate the next module.** Repeat. Each module is independent.
-7. **Convert Beat schedules** to `@soniq.periodic(...)` and stand up a `soniq scheduler` deployment. You can run Beat and the Soniq scheduler simultaneously while you migrate periodic tasks one at a time.
-8. **Drain Celery.** Stop enqueuing into Celery. Wait for the existing queue to empty. Stop Celery workers and Beat.
-9. **Remove the dependencies.** Delete `celery`, `kombu`, `flower`, and (if nothing else uses it) Redis from your stack.
-
-The migration is genuinely incremental: no flag day, no big-bang cutover. Each module flips when it's ready.
+1. Install Soniq alongside Celery.
+2. Run `soniq setup myapp.jobs:soniq` against your Postgres database. The command creates the Soniq tables and is idempotent.
+3. Pick a low-risk job module first. Choose idempotent jobs with low traffic.
+4. Convert its tasks: `@app.task` becomes `@soniq.job(name=...)`, sync functions become `async def`, and `task.delay(...)` becomes `await soniq.enqueue(...)`.
+5. Run a Soniq worker for that module next to your Celery workers.
+6. Watch the dashboard, your error tracker and latency for about a week.
+7. Migrate the next module.
+8. Convert Beat schedules to `@soniq.periodic(...)`. Start `soniq scheduler`. You can run Beat and the Soniq scheduler together while you move schedules one by one.
+9. Stop enqueuing into Celery. Wait for the Celery queues to empty. Stop the Celery workers and Beat.
+10. Remove `celery`, `kombu` and `flower`. Remove Redis if nothing else uses it.
 
 ## See also
 
 - [Quickstart](../quickstart.md) - five minutes from `pip install` to first job
-- [Transactional enqueue](../guides/transactional-enqueue.md) - the killer feature Celery cannot offer
+- [Migrate from RQ](from-rq.md) - the same guide for RQ users
+- [Transactional enqueue](../guides/transactional-enqueue.md) - enqueue a job in the same database transaction as your data, which a Redis or RabbitMQ broker cannot do
 - [Tutorial: defining jobs](../tutorial/01-defining-jobs.md) - the decorator API in depth
 - [Going to production](../production/going-to-production.md)

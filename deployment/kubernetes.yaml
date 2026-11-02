@@ -1,5 +1,8 @@
-# Soniq Kubernetes Deployment
-# Production-ready Kubernetes configuration
+# Soniq on Kubernetes: a setup Job, workers, the scheduler and the dashboard.
+#
+# Build one image from Dockerfile.worker (with your job code) and one from
+# Dockerfile.dashboard, push them, and replace registry.example.com/... below.
+# Run the soniq-setup Job once per deploy, before you roll out the workers.
 
 apiVersion: v1
 kind: Namespace
@@ -23,9 +26,35 @@ metadata:
   name: soniq-secrets
   namespace: soniq
 type: Opaque
-data:
-  # Base64 encoded values - replace with actual values
-  SONIQ_DATABASE_URL: cG9zdGdyZXNxbDovL2Zhc3Rqb2I6cGFzc3dvcmRAbG9jYWxob3N0L2Zhc3Rqb2JfcHJvZA==
+stringData:
+  # Replace both values. Better still, create this Secret outside version control.
+  SONIQ_DATABASE_URL: "postgresql://soniq:change_me@postgres.example.internal:5432/soniq_prod"
+  # The dashboard needs this when it listens on 0.0.0.0. Send it as X-API-Key.
+  SONIQ_DASHBOARD_API_KEY: "change_me_to_a_long_random_string"
+
+---
+# Applies Soniq's migrations, then exits. Delete and re-apply it on each
+# deploy, or run `soniq setup` from your CI pipeline instead.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: soniq-setup
+  namespace: soniq
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: soniq-setup
+        image: registry.example.com/myapp-worker:1.0.0
+        args: ["soniq", "setup"]
+        env:
+        - name: SONIQ_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DATABASE_URL
 
 ---
 apiVersion: apps/v1
@@ -45,10 +74,12 @@ spec:
       labels:
         app: soniq-worker
     spec:
+      # SIGTERM starts a drain of up to SONIQ_SHUTDOWN_TIMEOUT (30s). Give it
+      # longer than that before Kubernetes sends SIGKILL.
+      terminationGracePeriodSeconds: 45
       containers:
       - name: soniq-worker
-        image: soniq/worker:latest
-        imagePullPolicy: Always
+        image: registry.example.com/myapp-worker:1.0.0
         args:
           - "soniq"
           - "worker"
@@ -59,8 +90,8 @@ spec:
             secretKeyRef:
               name: soniq-secrets
               key: SONIQ_DATABASE_URL
-        # The soniq-scheduler Deployment below handles @periodic jobs;
-        # silence the WARN that would otherwise appear in worker logs.
+        # The soniq-scheduler Deployment below runs @periodic jobs, so
+        # silence the worker's "no scheduler" warning.
         - name: SONIQ_SCHEDULER_SUPPRESS_WARNING
           value: "1"
         envFrom:
@@ -73,36 +104,12 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "500m"
-        livenessProbe:
-          exec:
-            command:
-            - soniq
-            - health
-          initialDelaySeconds: 30
-          periodSeconds: 30
-          timeoutSeconds: 10
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-            - soniq
-            - ready
-          initialDelaySeconds: 5
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
-        volumeMounts:
-        - name: logs
-          mountPath: /app/logs
-      volumes:
-      - name: logs
-        emptyDir: {}
       restartPolicy: Always
 
 ---
-# Soniq Scheduler. Required for `@periodic` jobs. Run a single replica;
-# multiple replicas coordinate via the `soniq.maintenance` advisory lock
-# but only one is needed.
+# Soniq Scheduler. Needed only for @periodic jobs. One replica is enough.
+# Extra replicas are safe: they elect one leader through the
+# `soniq.scheduler` PostgreSQL advisory lock.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -122,8 +129,7 @@ spec:
     spec:
       containers:
       - name: soniq-scheduler
-        image: soniq/worker:latest
-        imagePullPolicy: Always
+        image: registry.example.com/myapp-worker:1.0.0
         args:
           - "soniq"
           - "scheduler"
@@ -133,8 +139,6 @@ spec:
             secretKeyRef:
               name: soniq-secrets
               key: SONIQ_DATABASE_URL
-        - name: SONIQ_SCHEDULING_ENABLED
-          value: "true"
         envFrom:
         - configMapRef:
             name: soniq-config
@@ -167,24 +171,30 @@ spec:
     spec:
       containers:
       - name: soniq-dashboard
-        image: soniq/dashboard:latest
-        imagePullPolicy: Always
+        image: registry.example.com/myapp-dashboard:1.0.0
         args:
           - "soniq"
           - "dashboard"
           - "--host=0.0.0.0"
-          - "--port=8000"
+          - "--port=6161"
         env:
         - name: SONIQ_DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: soniq-secrets
               key: SONIQ_DATABASE_URL
+        # With a key set, the dashboard accepts any Host header (pod IPs,
+        # the ingress host) and requires X-API-Key on every path except /.
+        - name: SONIQ_DASHBOARD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DASHBOARD_API_KEY
         envFrom:
         - configMapRef:
             name: soniq-config
         ports:
-        - containerPort: 8000
+        - containerPort: 6161
           name: http
         resources:
           requests:
@@ -194,27 +204,22 @@ spec:
             memory: "256Mi"
             cpu: "250m"
         livenessProbe:
+          # The HTML page at / answers without the API key.
           httpGet:
-            path: /health
-            port: 8000
+            path: /
+            port: http
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 10
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /ready
-            port: 8000
+            path: /
+            port: http
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-        volumeMounts:
-        - name: logs
-          mountPath: /app/logs
-      volumes:
-      - name: logs
-        emptyDir: {}
       restartPolicy: Always
 
 ---
@@ -231,7 +236,7 @@ spec:
   ports:
   - name: http
     port: 80
-    targetPort: 8000
+    targetPort: http
     protocol: TCP
   type: ClusterIP
 
@@ -280,10 +285,10 @@ spec:
       labels:
         app: soniq-priority-worker
     spec:
+      terminationGracePeriodSeconds: 45
       containers:
       - name: soniq-priority-worker
-        image: soniq/worker:latest
-        imagePullPolicy: Always
+        image: registry.example.com/myapp-worker:1.0.0
         args:
           - "soniq"
           - "worker"
@@ -305,24 +310,6 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "250m"
-        livenessProbe:
-          exec:
-            command:
-            - soniq
-            - health
-          initialDelaySeconds: 30
-          periodSeconds: 30
-          timeoutSeconds: 10
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-            - soniq
-            - ready
-          initialDelaySeconds: 5
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
       restartPolicy: Always
 
 ---
@@ -352,19 +339,7 @@ spec:
         type: Utilization
         averageUtilization: 80
 
----
-apiVersion: v1
-kind: ServiceMonitor
-metadata:
-  name: soniq-metrics
-  namespace: soniq
-  labels:
-    app: soniq
-spec:
-  selector:
-    matchLabels:
-      app: soniq-dashboard
-  endpoints:
-  - port: http
-    path: /metrics
-    interval: 30s
+# Prometheus: the dashboard has no /metrics endpoint. To export metrics,
+# pass Soniq(metrics_sink=PrometheusMetricsSink()) from soniq.observability,
+# call prometheus_client.start_http_server(9090) in the worker process, and
+# scrape port 9090 on the worker pods.

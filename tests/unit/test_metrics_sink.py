@@ -221,7 +221,7 @@ async def test_metrics_sink_records_dead_letter_on_corruption():
     )
 
     assert sink.ends[0]["status"] == "dead_letter"
-    assert "contract violation" in sink.ends[0]["error"]
+    assert "must be a JSON object" in sink.ends[0]["error"]
 
 
 def test_prometheus_sink_imports_lazily():

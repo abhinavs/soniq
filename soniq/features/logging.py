@@ -54,7 +54,7 @@ class LogAnalyzer:
                 SELECT
                     job_name,
                     COUNT(*) as error_count,
-                    array_agg(DISTINCT message) as error_messages
+                    pg_catalog.array_agg(DISTINCT message) as error_messages
                 FROM {self.table_name}
                 WHERE level IN ('ERROR', 'CRITICAL')
                 AND timestamp >= NOW() - ($1 || ' hours')::INTERVAL
@@ -68,7 +68,7 @@ class LogAnalyzer:
             error_trends = await conn.fetch(
                 f"""
                 SELECT
-                    DATE_TRUNC('hour', timestamp) as hour,
+                    pg_catalog.date_trunc('hour', timestamp, 'UTC') as hour,
                     COUNT(*) as error_count
                 FROM {self.table_name}
                 WHERE level IN ('ERROR', 'CRITICAL')

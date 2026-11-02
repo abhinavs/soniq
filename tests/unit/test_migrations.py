@@ -32,6 +32,7 @@ class TestMigrationStructure:
             "0003_scheduler.sql",
             "0004_webhooks.sql",
             "0005_logs.sql",
+            "0006_sql_api.sql",
         ]
 
     def test_migrations_discovered_in_order(self):
@@ -44,6 +45,7 @@ class TestMigrationStructure:
             "0003",
             "0004",
             "0005",
+            "0006",
         ]
 
     def test_version_filter_core(self):
@@ -58,6 +60,7 @@ class TestMigrationStructure:
             "0003",
             "0004",
             "0005",
+            "0006",
         ]
 
 

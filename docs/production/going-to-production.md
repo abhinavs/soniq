@@ -1,8 +1,10 @@
-# Going to production
+---
+description: Production checklist for Soniq, the PostgreSQL job queue for Python - setup, graceful shutdown, pool sizing, idempotent jobs, scheduler and common mistakes.
+---
 
-The 80/20 of running Soniq in production. If you do the four things in
-**Required** below and the four things in **Strongly recommended**,
-you have a healthy deploy. Everything else on this section is detail.
+# Production checklist for Soniq workers
+
+This page lists what a healthy Soniq deploy on PostgreSQL needs. Do the items under **Required** and **Strongly recommended**. The other pages in this section give the detail.
 
 ## At a glance
 
@@ -10,14 +12,15 @@ A copy-into-the-ticket checklist:
 
 - [ ] `SONIQ_DATABASE_URL` and `SONIQ_JOBS_MODULES` set in the worker environment
 - [ ] `soniq setup` runs once per deploy (CI step, init container, or migration job - never from app startup on every replica)
-- [ ] Process manager sends `SIGTERM` for shutdown, with `terminationGracePeriodSeconds` / `TimeoutStopSec` >= longest job timeout
+- [ ] Process manager sends `SIGTERM` for shutdown, with `terminationGracePeriodSeconds` / `TimeoutStopSec` >= longest job timeout, and `SONIQ_SHUTDOWN_TIMEOUT` set for your async jobs
 - [ ] Handlers are idempotent (safe to run more than once - upserts, dedup keys, idempotency tokens)
 - [ ] A metrics sink wired up (Prometheus or your own `MetricsSink`)
 - [ ] If you use `@soniq.periodic`, a separate `soniq scheduler` process is running
 - [ ] `SONIQ_POOL_MAX_SIZE >= concurrency + SONIQ_POOL_HEADROOM`, and `max_connections` on the database has headroom for `num_workers * pool_size`
 - [ ] Per-job timeouts set for slow jobs; the global default is 300s
+- [ ] On a database created before Postgres 15 (`pg_upgrade` keeps the old default), with more than one role in the database: `REVOKE CREATE ON SCHEMA public FROM PUBLIC`
 
-The rest of this page explains each item. The [common production mistakes](#common-production-mistakes) section at the bottom is the most useful page on the site if something is misbehaving in production - read it first if you are debugging.
+The rest of this page explains each item. If something misbehaves in production, read [common production mistakes](#common-production-mistakes) first.
 
 ## Required
 
@@ -26,19 +29,31 @@ The rest of this page explains each item. The [common production mistakes](#comm
 | Variable | Example | Why |
 |---|---|---|
 | `SONIQ_DATABASE_URL` | `postgresql://user:pass@host/db` | Postgres connection string. |
-| `SONIQ_JOBS_MODULES` | `myapp.jobs,myapp.billing` | Modules the worker imports on startup so `@soniq.job` decorators run. Workers cannot process jobs they cannot import. |
+| `SONIQ_JOBS_MODULES` | `myapp.jobs,myapp.billing` | Modules the worker imports on startup so the `@soniq.job()` decorators run. Workers cannot process jobs they cannot import. |
 
 ### Run `soniq setup` only once per deploy
 
-`soniq setup` applies versioned migrations and is idempotent, but multiple replicas racing to apply the same migrations cause confusing errors. Run it from a CI step, a Kubernetes init container, a dedicated migration job, or an entrypoint that fires only on the first replica. Never from application startup on every replica.
+`soniq setup` applies versioned migrations and is idempotent. Do not run it from every replica at startup, because replicas that race to apply the same migrations can cause confusing errors. Run it from one place: a CI step, a Kubernetes `Job` or init container, a dedicated migration job, or an entrypoint that runs on the first replica only.
 
 ### Stop workers with `SIGTERM`, not `SIGKILL`
 
-Soniq handles `SIGTERM` by finishing in-flight jobs before exiting. `SIGKILL` (or OOM) leaves jobs stuck in `processing` until the heartbeat sweep recovers them, which takes up to `SONIQ_HEARTBEAT_TIMEOUT` (default 300s). Match the grace window in your process manager:
+On `SIGTERM`, the worker stops claiming jobs and waits for in-flight jobs. It waits up to `SONIQ_SHUTDOWN_TIMEOUT` seconds (default 30). After that, it cancels in-flight async jobs and returns them to `queued` without counting an attempt. For a sync handler, the worker waits a further `SONIQ_SYNC_HANDLER_GRACE_SECONDS` (default: the job timeout) and then keeps waiting for the thread. To let async jobs finish, raise `SONIQ_SHUTDOWN_TIMEOUT` to your longest job runtime.
+
+`SIGKILL` (or an out-of-memory kill) leaves jobs stuck in `processing`. The heartbeat sweep recovers them after up to `SONIQ_HEARTBEAT_TIMEOUT` (default 300s). Set the grace window in your process manager to at least `SONIQ_SHUTDOWN_TIMEOUT`, and to the longest sync job timeout if you use sync handlers:
 
 - **systemd:** `TimeoutStopSec=<longest job timeout + buffer>`
 - **Kubernetes:** `terminationGracePeriodSeconds: <same>`
 - **Supervisor:** `stopwaitsecs=<same>`
+
+### On a database created before Postgres 15, revoke `CREATE` on `public`
+
+If any role other than Soniq's own can log in to the database, run this once as the database owner:
+
+```sql
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+Before Postgres 15 every role can create functions in `public`, and a function there can shadow a built-in that Postgres, Soniq or your own code calls, so it runs as whoever calls it, the superuser that runs `soniq setup` included. New databases on Postgres 15 and newer already ship with this revoked, but a cluster brought up from 14 or older with `pg_upgrade` keeps the old grant. To check, `SELECT has_schema_privilege('public', 'public', 'CREATE')` returns `true` when you still need the `REVOKE`.
 
 ### Design jobs to be idempotent
 
@@ -56,16 +71,16 @@ Wire a metrics sink:
 
 ```python
 from soniq import Soniq
-from soniq.metrics import PrometheusMetricsSink
+from soniq.observability import PrometheusMetricsSink
 
 soniq = Soniq(metrics_sink=PrometheusMetricsSink())
 ```
 
-Mount `/metrics` from `prometheus_client.make_asgi_app()` on whatever HTTP surface you scrape, or run `soniq dashboard` and point Grafana at its `/api/metrics`.
+Mount `/metrics` from `prometheus_client.make_asgi_app()` on the HTTP surface you scrape. Or run `soniq dashboard` and read its JSON `/api/metrics` endpoint.
 
 ### Run `soniq scheduler` if you use `@soniq.periodic`
 
-The CLI worker (`soniq worker`) does **not** evaluate due recurring jobs. Run a separate `soniq scheduler` process. Multiple instances coordinate via a Postgres advisory lock; runners-up wait for the leader.
+The CLI worker (`soniq worker`) does **not** evaluate due recurring jobs. Run a separate `soniq scheduler` process. Multiple instances coordinate through a Postgres advisory lock, and the runners-up wait for the leader.
 
 ### Pool sizing
 
@@ -79,7 +94,7 @@ Total Postgres load is `num_worker_processes * SONIQ_POOL_MAX_SIZE`. Confirm `ma
 
 ### Per-job timeouts
 
-The global default is `SONIQ_JOB_TIMEOUT=300` seconds. Override for slow jobs with `@soniq.job(timeout=600)`; set to `0` to disable per-job. Without a timeout, a hung handler ties up a concurrency slot until the worker restarts.
+The global default is `SONIQ_JOB_TIMEOUT=300` seconds. Override it for slow jobs with `@soniq.job(name="reports.build", timeout=600)`. Set `timeout=0` to disable the timeout for one job. Without a timeout, a hung handler holds a concurrency slot until the worker restarts.
 
 ## Common production mistakes
 

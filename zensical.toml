@@ -24,6 +24,7 @@ nav = [
   { "Guides" = [
     { "FastAPI" = "guides/fastapi.md" },
     { "Transactional enqueue" = "guides/transactional-enqueue.md" },
+    { "Cross-service jobs" = "guides/cross-service-jobs.md" },
     { "Common patterns" = "guides/common-patterns.md" },
     { "Testing" = "guides/testing.md" },
   ] },
@@ -61,6 +62,7 @@ nav = [
     { "Going to production" = "production/going-to-production.md" },
     { "Deployment" = [
       { "Overview" = "production/deployment.md" },
+      { "Deployment shapes" = "production/deployment-shapes.md" },
       { "Systemd" = "production/deployment-systemd.md" },
       { "Docker Compose" = "production/deployment-docker-compose.md" },
       { "Kubernetes" = "production/deployment-kubernetes.md" },
@@ -69,6 +71,7 @@ nav = [
     { "PostgreSQL tuning" = "production/postgres.md" },
     { "Reliability" = "production/reliability.md" },
     { "Migrations with Alembic" = "production/migrations.md" },
+    { "Upgrading" = "production/upgrading.md" },
   ] },
   { "Troubleshooting" = "troubleshooting.md" },
 ]

@@ -1,8 +1,15 @@
-# Production
+---
+description: Run Soniq, the PostgreSQL job queue for Python, in production. Deployment recipes, pool sizing, delivery guarantees, Alembic migrations and upgrade steps.
+---
 
-Everything you need to run Soniq reliably in production.
+# Run Soniq in production
 
-- [Going to production](going-to-production.md) - the eight things that matter for a healthy deploy
-- [Deployment](deployment.md) - systemd, Docker Compose, Kubernetes, and Supervisor configurations
-- [PostgreSQL tuning](postgres.md) - connection pool sizing, PgBouncer integration, LISTEN/NOTIFY considerations
-- [Reliability](reliability.md) - delivery guarantees, idempotency, stuck job recovery, failure modes
+These pages show how to deploy Soniq workers, the scheduler and the dashboard on PostgreSQL, and how to keep them healthy. Start with the checklist, then pick a deployment recipe.
+
+- [Going to production](going-to-production.md) - the checklist and the common mistakes
+- [Deployment](deployment.md) - systemd, Docker Compose, Kubernetes and Supervisor configurations
+- [Deployment shapes](deployment-shapes.md) - producer services, consumer services and shared task stubs
+- [PostgreSQL tuning](postgres.md) - connection pool sizing, PgBouncer and LISTEN/NOTIFY
+- [Reliability](reliability.md) - delivery guarantees, idempotency, stuck job recovery and failure modes
+- [Migrations with Alembic](migrations.md) - export the Soniq schema as an Alembic revision
+- [Upgrading from 0.1.0](upgrading.md) - migration 0006, deploy order and rollback

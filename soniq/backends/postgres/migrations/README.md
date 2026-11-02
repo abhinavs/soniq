@@ -21,6 +21,7 @@ Within the core range:
 | `0003`  | `0003_scheduler.sql`  | `Soniq.setup()` |
 | `0004`  | `0004_webhooks.sql`   | `Soniq.setup()` |
 | `0005`  | `0005_logs.sql`       | `Soniq.setup()` |
+| `0006`  | `0006_sql_api.sql`    | `Soniq.setup()` |
 
 `Soniq.setup()` applies the `0001-0099` core slice. There is no
 `--features` flag any more: 0.0.2 always creates every soniq-owned table

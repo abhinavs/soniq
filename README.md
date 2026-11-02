@@ -4,7 +4,7 @@
 
 # Soniq
 
-Background jobs for FastAPI and any asyncio app, stored in the Postgres you already have. No Redis, no broker, nothing else to run.
+Soniq is a Python background job library that stores jobs in PostgreSQL, with no Redis and no broker. It is for developers who build FastAPI or other asyncio apps on Postgres and want retries, scheduling and a dashboard without another service to run.
 
 - Jobs are rows in your database. They survive restarts and deploys, and they retry on failure.
 - Enqueue a job in the same transaction as your business write. If the write rolls back, the job is gone too.
@@ -28,12 +28,16 @@ from soniq import Soniq
 
 soniq = Soniq()
 
-@soniq.job(name="send_welcome")
+@soniq.job(name="emails.send_welcome")
 async def send_welcome(to: str):
     print(f"Sending welcome email to {to}")
 
 if __name__ == "__main__":
-    asyncio.run(soniq.enqueue(send_welcome, to="dev@example.com"))
+    async def main():
+        await soniq.enqueue(send_welcome, to="dev@example.com")
+        await soniq.close()
+
+    asyncio.run(main())
 ```
 
 ```bash
@@ -44,7 +48,7 @@ soniq worker jobs:soniq --concurrency 4  # run a worker
 python jobs.py                           # enqueue (in another terminal)
 ```
 
-Four steps. Define a job, set up the database, run a worker, enqueue. `Soniq()` and the `soniq` command both read `SONIQ_DATABASE_URL`. `jobs:soniq` tells the worker where your Soniq instance is, so it finds your `@soniq.job()` functions. The `SONIQ_JOBS_MODULES=jobs` environment variable from earlier releases still works.
+The quickstart has four steps: define a job, set up the database, run a worker, and enqueue. `Soniq()` and the `soniq` command both read `SONIQ_DATABASE_URL`. `jobs:soniq` tells the worker where your Soniq instance is, so it finds your `@soniq.job()` functions. The `SONIQ_JOBS_MODULES=jobs` environment variable from earlier releases still works.
 
 ## Coming from FastAPI BackgroundTasks
 
@@ -101,24 +105,22 @@ async with soniq.backend.acquire() as conn:
 
 A Redis-backed queue cannot do this. Its writes go to a different system, so you need an outbox table and a process to drain it. Soniq's job table is in your Postgres, so one transaction covers both. See the [transactional enqueue guide](https://github.com/abhinavs/soniq/blob/main/docs/guides/transactional-enqueue.md).
 
-Soniq is at-least-once, not exactly-once. A worker can crash after it runs your handler but before it marks the row done. The heartbeat sweep then requeues the job. That takes up to `SONIQ_HEARTBEAT_TIMEOUT` plus `SONIQ_CLEANUP_INTERVAL` (10 minutes with the defaults), so lower both if crashed jobs need to come back sooner. Write handlers so they can run again safely. See [docs/guides/cross-service-jobs.md](https://github.com/abhinavs/soniq/blob/main/docs/guides/cross-service-jobs.md) for the delivery details.
+Soniq delivers each job at least once, not exactly once. A worker can crash after it runs your handler but before it marks the row done. The heartbeat sweep then requeues the job. That takes up to `SONIQ_HEARTBEAT_TIMEOUT` plus `SONIQ_CLEANUP_INTERVAL` (10 minutes with the defaults). Lower both if crashed jobs must come back sooner. Write handlers so they can run again safely. See [docs/guides/cross-service-jobs.md](https://github.com/abhinavs/soniq/blob/main/docs/guides/cross-service-jobs.md) for the delivery details.
 
 ## Why Soniq
 
-Most Python job queues force you to run Redis or RabbitMQ alongside your database. That is another service to deploy, monitor, back up, and debug when things go wrong at 3am.
+Most Python job queues need Redis or RabbitMQ next to your database. That is another service to deploy, monitor and back up.
 
-Soniq uses your existing PostgreSQL. One dependency. One place your data lives. One thing to back up.
+Soniq uses your existing PostgreSQL. Your jobs and your data live in one database, so you back up one thing.
 
 | Feature                      | Soniq | Celery      | RQ     |
 | ---------------------------- | ----- | ----------- | ------ |
 | No Redis / broker dependency | Yes   | No          | No     |
 | Async native                 | Yes   | Partial     | No     |
 | **Transactional enqueue**    | Yes   | No          | No     |
-| Setup complexity             | Low   | High        | Medium |
 | Built-in dashboard           | Yes   | No (Flower) | No     |
-| Dead-letter queue            | Yes   | No          | No     |
 
-For a longer comparison with Celery, RQ, arq, Taskiq, and the other Postgres-backed queues, see [docs/compare.md](https://github.com/abhinavs/soniq/blob/main/docs/compare.md). For numbers, see [docs/benchmarks.md](https://github.com/abhinavs/soniq/blob/main/docs/benchmarks.md). For what we promise to keep stable, see [docs/stability.md](https://github.com/abhinavs/soniq/blob/main/docs/stability.md).
+The table is a short summary. For a longer, sourced comparison with Celery, RQ, arq, Taskiq and the other Postgres-backed queues, see [docs/compare.md](https://github.com/abhinavs/soniq/blob/main/docs/compare.md). For numbers, see [docs/benchmarks.md](https://github.com/abhinavs/soniq/blob/main/docs/benchmarks.md). For what we promise to keep stable, see [docs/stability.md](https://github.com/abhinavs/soniq/blob/main/docs/stability.md).
 
 ## When NOT to use Soniq
 
@@ -158,15 +160,16 @@ soniq dashboard                       # binds 127.0.0.1:6161
 
 ```bash
 pip install soniq              # core + scheduler + Prometheus sink (Postgres backend)
-pip install soniq[full]        # everything below
-pip install soniq[dashboard]   # web dashboard (FastAPI + uvicorn)
-pip install soniq[webhooks]    # webhook delivery + signing
-pip install soniq[logging]     # structlog integration
-pip install soniq[sqlalchemy]  # pass a SQLAlchemy session to enqueue
-pip install soniq[psycopg]     # pass a psycopg 3 connection to enqueue
+pip install "soniq[full]"        # sqlite, webhooks, logging and dashboard extras
+pip install "soniq[dashboard]"   # web dashboard (FastAPI + uvicorn)
+pip install "soniq[sqlite]"      # SQLite backend for dev and tests
+pip install "soniq[webhooks]"    # webhook delivery + signing
+pip install "soniq[logging]"     # structlog integration
+pip install "soniq[sqlalchemy]"  # pass a SQLAlchemy session to enqueue
+pip install "soniq[psycopg]"     # pass a psycopg 3 connection to enqueue
 ```
 
-The default install is batteries-included: `croniter` (so `@periodic` and the recurring scheduler work out of the box) and `prometheus_client` (so `PrometheusMetricsSink` is importable) ship with core. They stay dormant unless wired - the scheduler only runs if you start it, and the default `MetricsSink` is `NoopMetricsSink`.
+The default install includes `croniter` (so `@periodic` works out of the box) and `prometheus_client` (so `PrometheusMetricsSink` is importable). Both stay dormant until you use them. The scheduler runs only if you start it, and the default `MetricsSink` is `NoopMetricsSink`.
 
 ## Documentation
 

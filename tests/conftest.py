@@ -19,3 +19,12 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def _dashboard_test_host():
+    # TestClient sends "Host: testserver", which a keyless dashboard rejects.
+    # Its own MonkeyPatch, so tests' `monkeypatch` still undoes first.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SONIQ_DASHBOARD_ALLOWED_HOSTS", "testserver,test,x")
+        yield

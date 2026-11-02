@@ -1,46 +1,50 @@
-# Glossary
+---
+description: "Glossary of Soniq terms: job, handler, task name, worker, scheduler, queue, heartbeat, dead-letter queue and at-least-once delivery for Python on PostgreSQL."
+---
 
-One-paragraph definitions for the words Soniq's docs use.
+# Soniq glossary: job, worker, queue and dead-letter terms
+
+This page defines the words Soniq's docs use for its PostgreSQL-backed Python background jobs, in one paragraph each.
 
 ## Job
 
-A unit of work. Either the function you decorate with `@soniq.job` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
+A unit of work. Either the function you decorate with `@soniq.job()` (the **handler**), or a specific row in `soniq_jobs` representing one scheduled invocation of that function (the **job instance**). Most of the docs say "job" for both and the meaning is clear from context. When ambiguity matters, "handler" and "job row" are the disambiguating terms.
 
 ## Handler
 
-The Python function that runs when a job is processed. Registered via `@soniq.job`.
+The Python function that runs when a job is processed. Registered with `@soniq.job()`.
 
 ## Task name
 
-The string identifier under which a handler is registered. By default Soniq derives it from `f"{module}.{qualname}"` (Celery-style). Override with `@soniq.job(name="...")`. The task name is the wire protocol for cross-service deployments - producers refer to handlers by name, not by import.
+The string identifier under which a handler is registered. Set it with `@soniq.job(name="...")`. If you omit `name=`, Soniq derives `f"{module}.{qualname}"`, which is deprecated since 0.2.0 and warns. The task name is the wire protocol for cross-service deployments. Producers refer to handlers by name, not by import.
 
 ## TaskRef
 
-A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref(name="billing.send_invoice", args_model=InvoiceArgs)` - the arguments are keyword-only. Use it for cross-service producer/consumer setups where the producer should not own the handler implementation. See [cross-service jobs](../guides/cross-service-jobs.md).
+A typed stub that lets a producer enqueue a job by name without importing the consumer's code. Created via `task_ref(name="billing.send_invoice", args_model=InvoiceArgs)` - the arguments are keyword-only. Use it when the producer must not own the handler code, as in a cross-service setup. See [cross-service jobs](../guides/cross-service-jobs.md).
 
 ## Worker
 
-A long-running process that polls (or receives `NOTIFY` for) jobs, claims them via `SELECT ... FOR UPDATE SKIP LOCKED`, and runs the handler. Started with `soniq worker`. Multiple workers can compete for the same queue safely.
+A long-running process that polls for jobs (or receives a PostgreSQL `NOTIFY`), claims them with `SELECT ... FOR UPDATE SKIP LOCKED`, and runs the handler. Start it with `soniq worker`. Several workers can safely take jobs from the same queue.
 
 ## Scheduler
 
-A separate long-running process (`soniq scheduler`) that evaluates `@soniq.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The CLI worker does not evaluate recurring jobs - that is intentional, so worker scaling does not duplicate scheduler work. Multiple scheduler instances coordinate via a Postgres advisory lock; only one does work at a time.
+A separate long-running process (`soniq scheduler`) that evaluates `@soniq.periodic` jobs and writes due instances into `soniq_jobs` for workers to pick up. The worker does not evaluate recurring jobs. This is intentional: scaling workers does not duplicate scheduler work. Several scheduler instances coordinate with a PostgreSQL advisory lock, and only one does work at a time.
 
 ## Queue
 
-A `varchar` column on `soniq_jobs` used for routing. Workers can be started with `--queues=foo,bar` to consume from a subset. Default queue name is `"default"`. Queues are not separate tables - just a routing tag.
+A `varchar` column on `soniq_jobs` used for routing. Start a worker with `--queues=foo,bar` to consume from a subset. The default queue name is `"default"`. Queues are not separate tables. A queue is a routing tag.
 
 ## Concurrency
 
-The number of in-flight jobs a single worker process will run at once. Default is 4. Tune up for I/O-bound workloads, down for CPU-bound. Set with `--concurrency` or `SONIQ_WORKER_CONCURRENCY`.
+The number of jobs a single worker process runs at once. The default is 4. Raise it for I/O-bound workloads and lower it for CPU-bound ones. Set it with `soniq worker --concurrency N`, or with `concurrency=` on `run_worker()`.
 
 ## Heartbeat
 
-Periodic write each worker performs to `soniq_workers` to advertise liveness. If a worker stops heartbeating for `SONIQ_HEARTBEAT_TIMEOUT` seconds (default 300), surviving workers detect it as stale, reset its in-flight jobs to `queued`, and remove its row.
+A periodic write that each worker makes to `soniq_workers` to show it is alive. If a worker stops its heartbeat for `SONIQ_HEARTBEAT_TIMEOUT` seconds (default 300), the surviving workers mark it `stopped` and reset its in-flight jobs to `queued`.
 
 ## Dead-letter queue (DLQ)
 
-The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. Use `soniq.dead_letter.list_dead_letter_jobs()`, `soniq.dead_letter.replay(dead_letter_id)`, or the `soniq dead-letter` CLI to inspect and recover them. See the [dead-letter Python API](../api/dead-letter.md).
+The `soniq_dead_letter_jobs` table. Jobs that exhaust all retries land here instead of staying in `soniq_jobs`. To inspect and recover them, use `soniq.dead_letter.list_dead_letter_jobs()`, `soniq.dead_letter.replay(dead_letter_id)` or the `soniq dead-letter` CLI. See the [dead-letter Python API](../api/dead-letter.md).
 
 ## Replay
 
@@ -48,12 +52,12 @@ Re-running a dead-letter job by minting a fresh `soniq_jobs` row from it. The or
 
 ## At-least-once delivery
 
-Soniq's delivery guarantee. A job will run at least once but may run more than once if a worker crashes mid-handler before marking the row done. Handlers must be **idempotent** - rerunning them must produce the same end state. Soniq does not offer an exactly-once mode; nothing on Postgres alone can.
+Soniq's delivery guarantee. A job runs at least once. It can run more than once if a worker crashes in the handler before it marks the row done. Handlers must be **idempotent**: running them again must produce the same end state. Soniq has no exactly-once mode, because PostgreSQL alone cannot guarantee it.
 
 ## Transactional enqueue
 
-Enqueueing a job inside the same Postgres transaction as your business writes by passing `connection=conn` to `enqueue()`. If the transaction rolls back, the job row is also rolled back. The reason most teams pick a Postgres-backed queue. Postgres-only - SQLite and the in-memory backend do not support it.
+Enqueueing a job inside the same Postgres transaction as your business writes by passing `connection=conn` to `enqueue()`. If the transaction rolls back, the job row is also rolled back. It is the main reason to pick a PostgreSQL-backed queue. It works on PostgreSQL only - SQLite and the in-memory backend do not support it.
 
 ## Backend
 
-The storage layer. The production backend is `asyncpg` against PostgreSQL. SQLite and an in-memory backend exist for local development and tests; both have hard limitations (single-writer, no transactional enqueue, polling-only) and are not for production.
+The storage layer. The production backend is `asyncpg` against PostgreSQL. SQLite and an in-memory backend exist for local development and tests; both have hard limits (single writer, no transactional enqueue, polling only) and are not for production.

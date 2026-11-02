@@ -19,8 +19,7 @@ In another shell (same `SONIQ_DATABASE_URL`):
 The producer prints the job id; the consumer logs the handler running
 with the producer's args.
 
-This is the "manual sanity" check from
-`impl_plan_multi.md` phase 1 exit criteria. The MemoryBackend
+The MemoryBackend
 equivalent lives in `tests/integration/test_cross_service_enqueue.py`
 and runs as part of the test suite; this example is for verifying the
 real Postgres path end-to-end before cutting a release.

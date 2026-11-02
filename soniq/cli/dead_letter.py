@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import sys
+import uuid
 
 from soniq.discovery import discover_and_import_modules
 from soniq.features.dead_letter import DeadLetterFilter
 
 from ._context import cli_app, execution_app
-from ._helpers import app_argument, database_url_argument, resolve_jobs_modules
+from ._helpers import (
+    _is_app_path,
+    app_argument,
+    database_url_argument,
+    resolve_jobs_modules,
+)
 
 # Bulk replay/delete prompts above this threshold unless --yes is passed.
 # Below it, single-digit operations are treated as deliberate and run silently.
@@ -27,7 +32,9 @@ def add_dead_letter_cmd(subparsers) -> None:
         choices=["list", "replay", "delete", "cleanup", "export"],
         help="Action to perform",
     )
-    parser.add_argument("job_ids", nargs="*", help="Job IDs (for replay)")
+    parser.add_argument(
+        "job_ids", nargs="*", help="Job IDs (replay/delete), or APP for the others"
+    )
     parser.add_argument("--all", action="store_true", help="Apply action to all jobs")
     parser.add_argument("--filter", help="Filter by job name pattern")
     parser.add_argument("--limit", type=int, default=50, help="Maximum jobs to show")
@@ -92,6 +99,31 @@ def _confirm(prompt: str) -> bool:
 
 
 async def handle_dead_letter(args) -> int:
+    if args.action in ("replay", "delete"):
+        for job_id in args.job_ids:
+            try:
+                uuid.UUID(job_id)
+            except ValueError:
+                print(f"Invalid job id (not a UUID): {job_id}", file=sys.stderr)
+                return 1
+    elif args.job_ids:
+        # These actions take no ids, so a lone positional is the APP, like
+        # ``soniq worker APP``.
+        if len(args.job_ids) == 1 and _is_app_path(args.job_ids[0]):
+            if args.app and args.app != args.job_ids[0]:
+                print(
+                    "Error: pass the app once, either as APP or with --app",
+                    file=sys.stderr,
+                )
+                return 1
+            args.app = args.job_ids[0]
+        else:
+            print(
+                f"Error: unexpected argument(s): {' '.join(args.job_ids)}",
+                file=sys.stderr,
+            )
+            return 1
+
     # ``replay`` re-inserts a soniq_jobs row and needs the target job's
     # registration to resolve max_attempts, so it must run on the same
     # instance the job modules registered on (like worker/scheduler). The
@@ -224,12 +256,13 @@ async def handle_dead_letter(args) -> int:
             if not args.output:
                 print("--output is required for export")
                 return 1
-            filename = await dead_letter.export_dead_letter_jobs(
-                filter_criteria, format=args.format
-            )
-            if args.output and args.output != filename:
-                os.replace(filename, args.output)
-                filename = args.output
+            try:
+                filename = await dead_letter.export_dead_letter_jobs(
+                    filter_criteria, format=args.format, output=args.output
+                )
+            except OSError as e:
+                print(f"Can't write {args.output}: {e.strerror}", file=sys.stderr)
+                return 1
             print(filename)
             return 0
 

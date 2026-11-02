@@ -1,6 +1,10 @@
-# Deprecations
+---
+description: Deprecated Soniq features with removal versions and replacements, plus how SoniqDeprecationWarning works and how SONIQ_DEPRECATIONS changes it.
+---
 
-This page lists every deprecated Soniq feature and the plan to remove it.
+# Soniq deprecations and removal plan
+
+This page lists every deprecated Soniq feature, the version that removes it, and the replacement.
 
 ## Policy
 

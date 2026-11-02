@@ -128,7 +128,7 @@ async def test_cli_error_handling():
 
 
 @pytest.mark.asyncio
-async def test_cli_with_real_jobs():
+async def test_cli_with_real_jobs(tmp_path):
     """Test CLI with actual job processing"""
     original_env = os.environ.copy()
 
@@ -139,19 +139,20 @@ app = Soniq()
 
 @app.job(name="cli_test_job", retries=1)
 async def cli_test_job(message: str):
-    with open("/tmp/soniq_cli_test.txt", "w") as f:
+    with open(OUTPUT, "w") as f:
         f.write(f"CLI test: {message}")
     return f"Processed: {message}"
 """
-
-    job_file_path = PROJECT_ROOT / "test_cli_jobs.py"
+    # Everything lives in tmp_path so two concurrent runs can't collide.
+    output_file = tmp_path / "soniq_cli_test.txt"
+    job_file_content = f"OUTPUT = {str(output_file)!r}\n" + job_file_content
+    job_file_path = tmp_path / "test_cli_jobs.py"
     with open(job_file_path, "w") as f:
         f.write(job_file_content)
 
     try:
-        import sys
-
-        sys.path.insert(0, str(PROJECT_ROOT))
+        sys.path.insert(0, str(tmp_path))
+        os.environ["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{PROJECT_ROOT}"
 
         import importlib
 
@@ -169,9 +170,6 @@ async def cli_test_job(message: str):
         await app.close()
 
         os.environ["SONIQ_JOBS_MODULES"] = "test_cli_jobs"
-        output_file = Path("/tmp/soniq_cli_test.txt")
-        if output_file.exists():
-            output_file.unlink()
 
         result = run_cli_command(["worker", "--run-once"], timeout=10)
         assert result.returncode == 0
@@ -192,12 +190,13 @@ async def cli_test_job(message: str):
     finally:
         os.environ.clear()
         os.environ.update(original_env)
-        if os.path.exists(job_file_path):
-            os.remove(job_file_path)
+        if str(tmp_path) in sys.path:
+            sys.path.remove(str(tmp_path))
+        sys.modules.pop("test_cli_jobs", None)
 
 
 @pytest.mark.asyncio
-async def test_scheduler_runs_periodic_on_discovered_instance():
+async def test_scheduler_runs_periodic_on_discovered_instance(tmp_path):
     """The scheduler must import the job modules and run on the instance that
     declared the @app.periodic jobs, then actually enqueue them.
 
@@ -219,7 +218,7 @@ app = Soniq()
 async def sched_test_job():
     return "tick"
 """
-    job_file_path = PROJECT_ROOT / "test_sched_jobs.py"
+    job_file_path = tmp_path / "test_sched_jobs.py"
     with open(job_file_path, "w") as f:
         f.write(job_file_content)
 
@@ -240,7 +239,7 @@ async def sched_test_job():
         env = os.environ.copy()
         env["SONIQ_DATABASE_URL"] = TEST_DATABASE_URL
         env["SONIQ_JOBS_MODULES"] = "test_sched_jobs"
-        env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
+        env["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{PROJECT_ROOT}"
 
         proc = subprocess.Popen(
             [
@@ -288,8 +287,6 @@ async def sched_test_job():
         await checker.close()
         os.environ.clear()
         os.environ.update(original_env)
-        if os.path.exists(job_file_path):
-            os.remove(job_file_path)
 
 
 @pytest.mark.asyncio

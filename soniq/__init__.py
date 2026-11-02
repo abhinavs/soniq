@@ -20,6 +20,7 @@ Usage::
 """
 
 from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec as _find_spec
 
 from .app import Soniq
 from .errors import SoniqError
@@ -48,7 +49,6 @@ __all__ = [
     "DASHBOARD_AVAILABLE",
 ]
 
-try:
-    from .dashboard.server import FASTAPI_AVAILABLE as DASHBOARD_AVAILABLE
-except Exception:
-    DASHBOARD_AVAILABLE = False
+# find_spec, not an import: importing FastAPI costs ~150ms on every
+# `import soniq`, even in processes that never start the dashboard.
+DASHBOARD_AVAILABLE = all(_find_spec(m) is not None for m in ("fastapi", "uvicorn"))

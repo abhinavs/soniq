@@ -1,6 +1,10 @@
-# Soniq compared with other tools
+---
+description: Compare Soniq with Celery, RQ, arq, Taskiq, Procrastinate, PgQueuer, Oban, Chancy, DBOS and Hatchet - a sourced guide to Python background job tools.
+---
 
-This page compares Soniq with other Python tools for background work. It tells you when to pick each one, including when to pick something other than Soniq.
+# Soniq compared with Celery, RQ and other Python job tools
+
+This page compares Soniq, a PostgreSQL-backed Python job library, with other tools for background work. It tells you when to pick each tool, including when to pick something other than Soniq.
 
 Last checked: 2026-10-16. Each claim about another tool comes from that tool's own docs or repository, linked in the table. Projects change. Check the source before you decide.
 
@@ -139,7 +143,7 @@ Celery supports RabbitMQ, Redis, and SQS. It has Canvas workflows (chains, group
 Pick Celery when:
 
 - You need chains and groups, or a broker shared with other languages.
-- You want a long-established ecosystem.
+- You want a tool with a long track record.
 
 Pick Soniq when:
 
@@ -186,5 +190,5 @@ Pick Soniq when:
 
 - You need DAG workflows: use Hatchet, DBOS, or Celery Canvas.
 - You need workers in other languages: use Hatchet or Celery.
-- You need more throughput than PostgreSQL row locking gives: use a Redis or RabbitMQ tool. See the [honest limits](why-soniq.md#honest-limits).
+- You need more throughput than PostgreSQL row locking gives: use a Redis or RabbitMQ tool. See the [honest limits](why-soniq.md#limits-of-soniq).
 - You need sync handlers: use Procrastinate, RQ, or Celery.

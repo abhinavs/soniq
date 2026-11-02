@@ -1,6 +1,10 @@
-# Kubernetes
+---
+description: Deploy Soniq workers, the scheduler and the dashboard on Kubernetes with PostgreSQL. Secrets, Deployments, graceful shutdown, autoscaling and a setup Job.
+---
 
-Best for containerized environments with autoscaling. File: `deployment/kubernetes.yaml`.
+# Run Soniq on Kubernetes
+
+Kubernetes suits container platforms with autoscaling. The repo has the full manifest at `deployment/kubernetes.yaml`. The examples below are condensed. The `registry.example.com/...` images are placeholders. Build your own from `deployment/Dockerfile.worker` and `deployment/Dockerfile.dashboard`, with your job code baked in.
 
 ## Secret and ConfigMap
 
@@ -11,9 +15,9 @@ metadata:
   name: soniq-secrets
   namespace: soniq
 type: Opaque
-data:
-  # echo -n "postgresql://user:pass@host/db" | base64
-  SONIQ_DATABASE_URL: <base64-encoded-url>
+stringData:
+  SONIQ_DATABASE_URL: "postgresql://user:pass@host:5432/db"
+  SONIQ_DASHBOARD_API_KEY: "a-long-random-string"
 
 ---
 apiVersion: v1
@@ -44,10 +48,10 @@ spec:
       labels:
         app: soniq-worker
     spec:
-      terminationGracePeriodSeconds: 310  # match your longest job timeout
+      terminationGracePeriodSeconds: 45  # longer than SONIQ_SHUTDOWN_TIMEOUT (30s)
       containers:
       - name: worker
-        image: soniq/worker:latest
+        image: registry.example.com/myapp-worker:1.0.0
         args: ["soniq", "worker", "--concurrency=4"]
         env:
         - name: SONIQ_DATABASE_URL
@@ -55,6 +59,9 @@ spec:
             secretKeyRef:
               name: soniq-secrets
               key: SONIQ_DATABASE_URL
+        # The scheduler Deployment runs @periodic jobs.
+        - name: SONIQ_SCHEDULER_SUPPRESS_WARNING
+          value: "1"
         envFrom:
         - configMapRef:
             name: soniq-config
@@ -65,21 +72,13 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "500m"
-        livenessProbe:
-          exec:
-            command: ["soniq", "health"]
-          initialDelaySeconds: 30
-          periodSeconds: 30
-        readinessProbe:
-          exec:
-            command: ["soniq", "ready"]
-          initialDelaySeconds: 5
-          periodSeconds: 10
 ```
+
+The `soniq` CLI has no `health` or `ready` command, so this example has no exec probes on the worker. Kubernetes restarts the container if the process exits. To check worker health from outside, run `soniq inspect` or watch the dashboard.
 
 ## Scheduler Deployment
 
-The scheduler is a separate Deployment. Multiple replicas coordinate via a Postgres advisory lock - one is leader, the rest idle. One replica is enough; two or three is fine if you want failover.
+The scheduler is a separate Deployment. Its replicas elect one leader through a PostgreSQL advisory lock, and the others wait. One replica is enough. Run two or three if you want failover.
 
 ```yaml
 apiVersion: apps/v1
@@ -99,7 +98,7 @@ spec:
     spec:
       containers:
       - name: scheduler
-        image: soniq/worker:latest
+        image: registry.example.com/myapp-worker:1.0.0
         args: ["soniq", "scheduler"]
         env:
         - name: SONIQ_DATABASE_URL
@@ -132,28 +131,33 @@ spec:
     spec:
       containers:
       - name: dashboard
-        image: soniq/dashboard:latest
-        args: ["soniq", "dashboard", "--host=0.0.0.0", "--port=8000"]
+        image: registry.example.com/myapp-dashboard:1.0.0
+        args: ["soniq", "dashboard", "--host=0.0.0.0", "--port=6161"]
         env:
         - name: SONIQ_DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: soniq-secrets
               key: SONIQ_DATABASE_URL
+        - name: SONIQ_DASHBOARD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: soniq-secrets
+              key: SONIQ_DASHBOARD_API_KEY
         envFrom:
         - configMapRef:
             name: soniq-config
         ports:
-        - containerPort: 8000
+        - containerPort: 6161
         livenessProbe:
           httpGet:
-            path: /health
-            port: 8000
+            path: /
+            port: 6161
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /ready
-            port: 8000
+            path: /
+            port: 6161
           periodSeconds: 10
 
 ---
@@ -167,9 +171,11 @@ spec:
     app: soniq-dashboard
   ports:
   - port: 80
-    targetPort: 8000
+    targetPort: 6161
   type: ClusterIP
 ```
+
+The dashboard needs `SONIQ_DASHBOARD_API_KEY` on Kubernetes. Without a key, it rejects any Host header that is not `localhost`, so probes to the pod IP and requests through the Ingress fail with HTTP 400. With a key, every path except `/` needs the `X-API-Key` header. For this reason, the probes use `/` and not `/api/system/health`.
 
 ## Autoscaling
 
@@ -180,11 +186,11 @@ kubectl autoscale deployment soniq-worker \
   --min=2 --max=10
 ```
 
-The `deployment/kubernetes.yaml` file also includes an HPA manifest and a ServiceMonitor for Prometheus.
+The `deployment/kubernetes.yaml` file also includes a HorizontalPodAutoscaler manifest. The dashboard has no `/metrics` endpoint. It serves JSON metrics at `/api/metrics`, not the Prometheus text format. For Prometheus scraping, expose `PrometheusMetricsSink` from your own app, as described in [going to production](going-to-production.md#logging-and-observability).
 
 ## Migration job
 
-`soniq setup` should run once per deploy, not from every replica. Run it as a `Job` (or an `initContainer` on a single-replica gate Deployment) before the worker Deployment is rolled out:
+Run `soniq setup` once per deploy, not from every replica. Roll out the setup `Job` before you roll out the worker Deployment:
 
 ```yaml
 apiVersion: batch/v1
@@ -198,7 +204,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: setup
-        image: soniq/worker:latest
+        image: registry.example.com/myapp-worker:1.0.0
         args: ["soniq", "setup"]
         env:
         - name: SONIQ_DATABASE_URL

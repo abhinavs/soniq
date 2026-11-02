@@ -1,6 +1,10 @@
-# Reliability
+---
+description: What Soniq guarantees on PostgreSQL - at-least-once delivery, idempotent job patterns, retries, stuck job recovery after a crash, and database failure behavior.
+---
 
-This document covers what Soniq guarantees, what it doesn't, and how to handle the failure modes you'll encounter in production.
+# Delivery guarantees and failure recovery
+
+Soniq delivers each job at least once, not exactly once. This page explains what that means, how to write idempotent jobs, and how Soniq recovers from worker and database failures.
 
 ## Delivery guarantees
 
@@ -12,7 +16,7 @@ This is a fundamental property of any job queue that doesn't require two-phase c
 
 ## Idempotency
 
-Because jobs can run more than once, all jobs should be idempotent. Running a job twice should produce the same result as running it once.
+Because jobs can run more than once, write every job to be idempotent. An idempotent job gives the same result when it runs twice as when it runs once.
 
 Common patterns:
 
@@ -36,10 +40,10 @@ async def send_welcome_email(user_id: int):
 
 ## Retry semantics
 
-When a job raises an exception, Soniq retries it automatically up to `max_retries` (default 3). Each retry respects the configured delay.
+When a job raises an exception, Soniq retries it automatically up to `retries` times (default 3, from `SONIQ_MAX_RETRIES`). The first run plus 3 retries gives 4 attempts. Each retry waits for the configured delay.
 
 ```python
-@soniq.job(name="jobs.call_external_api", max_retries=5, timeout=120)
+@soniq.job(name="jobs.call_external_api", retries=5, timeout=120)
 async def call_external_api(payload: dict):
     response = await httpx.post("https://api.example.com", json=payload)
     response.raise_for_status()
@@ -63,20 +67,20 @@ A job gets stuck in `processing` status when the worker running it dies without 
 
 ### Automatic recovery
 
-Running workers periodically scan for stale peers. When a worker's heartbeat exceeds the heartbeat timeout (default 300 seconds), its in-flight jobs are reset to `queued` and picked up by healthy workers.
+One running worker at a time scans for stale peers every `SONIQ_CLEANUP_INTERVAL` seconds. When a worker's last heartbeat is older than `SONIQ_HEARTBEAT_TIMEOUT` (default 300 seconds), the scan marks the worker `stopped` and resets its in-flight jobs to `queued`. Healthy workers then pick them up.
 
-Worst-case recovery time = `heartbeat_timeout` + `cleanup_interval`. With defaults, that's 10 minutes. Tune for your needs:
+Worst-case recovery time is `SONIQ_HEARTBEAT_TIMEOUT` plus `SONIQ_CLEANUP_INTERVAL`. With the defaults (300 and 300), that is 10 minutes. The minimum for `SONIQ_HEARTBEAT_TIMEOUT` is 60 and the minimum for `SONIQ_CLEANUP_INTERVAL` is 10. To recover faster, lower both:
 
 ```bash
 SONIQ_HEARTBEAT_TIMEOUT=120   # 2 minutes
 SONIQ_CLEANUP_INTERVAL=60     # check every minute
 ```
 
-The default 300-second job timeout also prevents most stuck-job scenarios caused by hung code (infinite loops, dead network calls). Override per-job with `@soniq.job(timeout=600)`.
+The default 300-second job timeout also stops most stuck jobs caused by hung code, such as infinite loops and dead network calls. Override it for one job with `@soniq.job(name="reports.build", timeout=600)`.
 
 ### Manual recovery
 
-If no workers are running (or you need to recover faster), reset stuck jobs directly:
+If no workers are running, or you need to recover faster, reset stuck jobs directly. **Warning:** this statement requeues every job it matches, so a job that is still running can run twice. Set the interval longer than your longest-running job. If a job legitimately runs for 30 minutes, use `INTERVAL '35 minutes'`.
 
 ```sql
 UPDATE soniq_jobs
@@ -85,15 +89,13 @@ WHERE status = 'processing'
   AND updated_at < NOW() - INTERVAL '10 minutes';
 ```
 
-> **Warning:** Set the interval longer than your longest-running job. If you have jobs that legitimately run for 30 minutes, use `INTERVAL '35 minutes'`.
-
 ### Cleaning up stale workers
 
 ```bash
 soniq inspect --cleanup
 ```
 
-Or manually:
+The command also requeues the jobs of stale workers. The manual SQL below only marks the worker records `stopped`:
 
 ```sql
 UPDATE soniq_workers
@@ -130,10 +132,10 @@ When a worker is detected as stale:
 
 Preventive measures:
 
-- Use `SIGTERM` for graceful shutdown. Soniq finishes in-flight jobs before exiting.
-- In Kubernetes, set `terminationGracePeriodSeconds` to match your longest job timeout.
-- In systemd, set `TimeoutStopSec` appropriately.
-- Monitor memory usage. The `SONIQ_MEMORY_USAGE_THRESHOLD` setting (default 90%) triggers a health warning.
+- Use `SIGTERM` for graceful shutdown. The worker waits up to `SONIQ_SHUTDOWN_TIMEOUT` seconds (default 30) for in-flight jobs, then returns unfinished async jobs to `queued`.
+- In Kubernetes, set `terminationGracePeriodSeconds` to at least your longest job timeout.
+- In systemd, set `TimeoutStopSec` to at least your longest job timeout.
+- Set a memory limit in your process manager, so a leaking handler restarts one worker and not the host.
 
 ## Database failure behavior
 
@@ -162,15 +164,15 @@ At-least-once delivery is the whole point. If a worker crashes after your job's 
 SQLite works for prototyping and local development, but it has hard limitations:
 
 - Single worker process only (no concurrent writers)
-- No `LISTEN/NOTIFY` -- workers poll for new jobs
-- No `FOR UPDATE SKIP LOCKED` -- no safe concurrent dequeue
+- No `LISTEN/NOTIFY`: workers poll for new jobs
+- No `FOR UPDATE SKIP LOCKED`: no safe concurrent dequeue
 - No transactional enqueue
 
 Do not run SQLite in production.
 
 ### PostgreSQL scaling limits
 
-Soniq is comfortable processing thousands of jobs per second on a single PostgreSQL instance. At 10,000+ jobs/sec, you'll start hitting contention on the jobs table. At that scale, consider:
+Soniq's [benchmark page](../benchmarks.md) measures 291 to 1682 jobs per second on a single PostgreSQL instance, depending on queue depth. Throughput falls as the backlog of waiting jobs grows. If you hit the limit of one instance, consider:
 
 - Partitioning the jobs table by queue
 - Dedicated PostgreSQL instances per queue group
@@ -179,7 +181,7 @@ Soniq is comfortable processing thousands of jobs per second on a single Postgre
 
 ### Stuck jobs after SIGKILL or OOM
 
-When a worker is killed without a chance to clean up, its in-flight jobs stay in `processing` until another worker detects the stale heartbeat. With defaults, that's up to 10 minutes. This is expected behavior, not data loss -- the jobs will be retried.
+When a worker is killed without a chance to clean up, its in-flight jobs stay in `processing` until another worker detects the stale heartbeat. With defaults, that's up to 10 minutes. This is expected behavior, not data loss. Soniq retries the jobs.
 
 ### Connection pool sizing matters
 

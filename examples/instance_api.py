@@ -5,10 +5,13 @@ Shows Soniq used as an application object. Run with:
 """
 
 import asyncio
+import os
 
 from soniq import JobContext, Soniq
 
-soniq = Soniq(database_url="postgresql://localhost/myapp")
+soniq = Soniq(
+    database_url=os.environ.get("SONIQ_DATABASE_URL", "postgresql://localhost/myapp")
+)
 
 
 @soniq.job(name="send_notification", queue="notifications", retries=2)

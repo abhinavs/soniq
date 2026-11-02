@@ -257,10 +257,21 @@ class MigrationRunner:
         """
         logger.info("Starting database migration process")
 
+        if conn.get_server_version().major < 15:
+            # ponytail: a warning, not a refusal. Nothing breaks on 14 yet,
+            # and managed hosts still run it into 2027.
+            logger.warning(
+                "PostgreSQL %s is not supported; Soniq needs 15 or newer. "
+                "It is untested and may break in a later release.",
+                conn.get_server_version().major,
+            )
+
         # Acquire the serializing advisory lock before any migration-table
         # interaction. pg_advisory_lock blocks until the other holder
         # releases, so both callers eventually make progress.
-        await conn.fetchval("SELECT pg_advisory_lock($1)", _MIGRATION_LOCK_KEY)
+        await conn.fetchval(
+            "SELECT pg_catalog.pg_advisory_lock($1::bigint)", _MIGRATION_LOCK_KEY
+        )
         try:
             # Ensure migration tracking table exists
             await self.ensure_migration_table(conn)
@@ -300,7 +311,9 @@ class MigrationRunner:
             logger.info(f"Successfully applied {applied_count} migrations")
             return applied_count
         finally:
-            await conn.fetchval("SELECT pg_advisory_unlock($1)", _MIGRATION_LOCK_KEY)
+            await conn.fetchval(
+                "SELECT pg_catalog.pg_advisory_unlock($1::bigint)", _MIGRATION_LOCK_KEY
+            )
 
     async def get_migration_status(
         self,
@@ -334,7 +347,18 @@ class MigrationRunner:
         version_filter: Optional[str] = None,
     ) -> dict:
         """Internal method to get migration status with a provided connection"""
-        await self.ensure_migration_table(conn)
+        # Creating the table races with a concurrent setup, so take the same
+        # lock the runner uses. It is session-scoped and re-entrant, so this
+        # is safe when called while already holding it.
+        await conn.fetchval(
+            "SELECT pg_catalog.pg_advisory_lock($1::bigint)", _MIGRATION_LOCK_KEY
+        )
+        try:
+            await self.ensure_migration_table(conn)
+        finally:
+            await conn.fetchval(
+                "SELECT pg_catalog.pg_advisory_unlock($1::bigint)", _MIGRATION_LOCK_KEY
+            )
 
         available_migrations = self.discover_migrations(version_filter=version_filter)
         applied_migrations = await self.get_applied_migrations(conn)

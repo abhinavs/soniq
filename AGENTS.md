@@ -29,7 +29,7 @@ async def send_email(to: str, subject: str, body: str):
 
 Always use parens: `@soniq.job()`, never `@soniq.job`. The bare form is not supported. Always pass `name=` too: a name derived from the module path is deprecated since 0.2.0 and warns.
 
-Decorator kwargs (all optional): `name=`, `retries=`, `priority=`, `queue=`, `unique=`, `retry_delay=`, `retry_backoff=`, `retry_max_delay=`, `timeout=`, `validate=`. See `docs/api/jobs.md`.
+Decorator kwargs (all optional): `name=`, `retries=`, `priority=`, `queue=`, `unique=`, `retry_delay=`, `retry_backoff=`, `retry_max_delay=`, `retry_jitter=`, `timeout=`, `validate=`. See `docs/api/jobs.md`.
 
 ### 2. Enqueue a job
 
@@ -121,7 +121,7 @@ await soniq.enqueue(send_email, to="dev@example.com", subject="Hi")
 
 The keyword-only style avoids ambiguity between Soniq's framework options (`queue`, `priority`, `scheduled_at`, `unique`, `dedup_key`, `connection`) and your job's own arguments. There is no `delay=`: pass `scheduled_at=` a `datetime` or `timedelta`, or use `soniq.schedule(fn, when, **kwargs)`.
 
-Enqueue checks the kwargs against the handler's signature (unless the job has a `validate=` model, which checks them instead) and rejects arguments that aren't JSON, such as a `datetime` or `UUID`. Both raise `SoniqError` (`from soniq import SoniqError`) with `error_code == "SONIQ_TASK_ARGS_INVALID"`.
+Enqueue checks the kwargs against the handler's signature (unless the job has a `validate=` model, which checks them instead) and rejects arguments that aren't JSON, such as a `datetime`, a `UUID`, or `NaN`. Both raise `SoniqError` (`from soniq import SoniqError`) with `error_code == "SONIQ_TASK_ARGS_INVALID"`.
 
 `send_email.enqueue("dev@example.com")` raises `TypeError` too. A type checker does not catch it, because `ParamSpec` cannot express keyword-only arguments.
 
@@ -130,6 +130,10 @@ If your producer is talking to a job in another service (no import access), use 
 ```python
 await soniq.enqueue("billing.send_invoice", args={"order_id": 123})
 ```
+
+By default (`SONIQ_ENQUEUE_VALIDATION=strict`) this raises `SONIQ_UNKNOWN_TASK_NAME` unless the name is registered in the producer's process. A pure producer sets `enqueue_validation="none"` on `Soniq(...)` (or the env var to `none`/`warn`), or enqueues a `TaskRef`. See `docs/guides/cross-service-jobs.md`.
+
+To enqueue from another language, call the SQL function `SELECT soniq_enqueue('billing.send_invoice', '{"order_id": 123}')` (named options: `queue`, `priority`, `run_at`, `max_attempts`, `unique_job`, `dedup_key`). Read the status and result back with `SELECT * FROM soniq_get_job(id)`. Both need `GRANT EXECUTE` for the service's role. The job name must be one that a Soniq worker registers with `@soniq.job(name=...)`, or the job is dead-lettered as `job_not_found`. Args are a plain JSON object, with no `NaN`. The handler's decorator settings (`queue=`, `retries=`, `unique=`) do not apply to SQL enqueues. See `docs/reference/storage-format.md`.
 
 ### 3. Calling `enqueue` from sync code without `asyncio.run`
 
@@ -193,6 +197,7 @@ async with db.begin():
 `connection=` accepts an SQLAlchemy `AsyncSession` or `AsyncConnection` (asyncpg or psycopg driver, active transaction), a raw `asyncpg` connection from any pool, or a `psycopg.AsyncConnection`. With a raw asyncpg connection:
 
 ```python
+await soniq.ensure_initialized()   # soniq.backend is None until this runs
 async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders (id, total) VALUES ($1, $2)", order_id, total)
@@ -216,7 +221,7 @@ async def test_signup(soniq_memory):
     assert await drain(soniq_memory) == [None]
 ```
 
-The `soniq_memory` and `soniq_pg` fixtures come from an opt-in plugin: add `pytest_plugins = ["soniq.testing.pytest_plugin"]` to `conftest.py`. Without the `soniq` marker, the fixture only knows jobs you define on it inside the test. With it, `send_email.enqueue(...)` and your module-level `soniq.enqueue(...)` also land in the fixture during the test.
+The `soniq_memory` and `soniq_pg` fixtures come from an opt-in plugin: add `pytest_plugins = ["soniq.testing.pytest_plugin"]` to `conftest.py`. `soniq_pg` reads `SONIQ_DATABASE_URL` (point it at an empty test database) and skips the test without it. Without the `soniq` marker, the fixture only knows jobs you define on it inside the test. With it, `send_email.enqueue(...)` and your module-level `soniq.enqueue(...)` also land in the fixture during the test.
 
 The tests are async, so set `asyncio_mode = "auto"` under `[tool.pytest.ini_options]` (or mark each test `@pytest.mark.asyncio`). Without it pytest skips them. See `docs/guides/testing.md`.
 
@@ -228,14 +233,14 @@ Use `@soniq.periodic(...)`, not Celery Beat or rq-scheduler:
 from datetime import timedelta
 from soniq import daily, every
 
-@soniq.periodic(cron=daily().at("09:00"))
+@soniq.periodic(cron=daily().at("09:00"), name="reports.daily_report")
 async def daily_report(): ...
 
-@soniq.periodic(every=timedelta(minutes=15))
+@soniq.periodic(every=timedelta(minutes=15), name="cache.warm_caches")
 async def warm_caches(): ...
 ```
 
-Pick exactly one of `cron=` or `every=`. Then run `soniq scheduler` as a separate process - it's the leader-elected service that fires due jobs. Without it, `@soniq.periodic` registrations are inert.
+Pick exactly one of `cron=` or `every=`. `periodic` also takes the `@soniq.job()` kwargs, including `name=`; leave it out and you get the derived-name deprecation warning. Then run `soniq scheduler` as a separate process - it's the leader-elected service that fires due jobs. Without it, `@soniq.periodic` registrations are inert.
 
 ## Hooks (the replacement for Celery's `bind=True`)
 
@@ -252,7 +257,9 @@ async def log_done(job_name, job_id, duration_ms): ...
 async def report(job_name, job_id, error, attempt): ...
 ```
 
-Hooks are sync-or-async. A failing hook is logged and ignored - it never blocks job execution.
+Hooks are sync-or-async and get these arguments positionally, in this order. A failing hook is logged and ignored - it never blocks job execution.
+
+Inside a handler, declare a `ctx: JobContext` parameter (`from soniq import JobContext`) to get `job_id`, `job_name`, `attempt`, `max_attempts`, `queue`, `worker_id`, `scheduled_at` and `created_at`. Don't pass it when you enqueue.
 
 ## CLI surface (for orchestration)
 
@@ -261,12 +268,13 @@ Hooks are sync-or-async. A failing hook is logged and ignored - it never blocks 
 | `soniq setup [APP]` | Create/update schema. Idempotent. Run once per deploy. |
 | `soniq worker [APP] [--concurrency N] [--queues a,b]` | Long-running worker process. |
 | `soniq scheduler [APP]` | Long-running periodic-job dispatcher. Run one (more if you want failover - they leader-elect). |
-| `soniq dashboard [APP] [--host 0.0.0.0] [--port 6161]` | Web UI for inspecting jobs and queues. Read-only by default. |
+| `soniq dashboard [APP] [--host 0.0.0.0] [--port 6161]` | Web UI for inspecting jobs and queues. Read-only by default. Needs `pip install "soniq[dashboard]"`. Write actions (replay, cancel, delete) need `SONIQ_DASHBOARD_WRITE_ENABLED=true` and `SONIQ_DASHBOARD_API_KEY`; once the key is set, every request must send it as `X-API-Key`. |
 | `soniq inspect [APP]` | List active workers and their status. `--cleanup` removes stale records. |
 | `soniq dead-letter list \| replay \| delete \| cleanup \| export` | DLQ management. |
 | `soniq status [APP] [--verbose] [--jobs]` | Health summary, queue stats, recent jobs. |
 | `soniq migrate-status [APP]` | Show applied vs pending migrations. |
 | `soniq migrations export --alembic\|--sql` | Print core migrations as an Alembic revision or SQL. |
+| `soniq tasks-check [PACKAGE]` | Compare `TaskRef` stubs against the workers' task registry. Exits non-zero on drift, for CI. |
 
 Full reference: `docs/cli/commands.md`.
 
@@ -280,8 +288,8 @@ If a user's request mentions one of these, push back rather than fabricating an 
 - **`bind=True` / per-task `self`.** Use hooks or `JobContext` instead.
 - **`task.signature(...)` / `.s(...)` partials.** Build the kwargs dict yourself.
 - **Worker remote control / broadcast.** Send `SIGTERM`.
-- **Config-driven `task_routes`.** Queue is on the decorator (`@soniq.job(queue=...)`) or the enqueue call.
-- **Burst-mode workers** (RQ's `--burst`). Workers are long-lived. For one-shot batch processing, write a script that calls `await soniq.enqueue(...)` and let normal workers process.
+- **Config-driven `task_routes`.** There is only a consumer-side `route_map` setting (name prefix to queue). Otherwise the queue is on the decorator (`@soniq.job(queue=...)`) or the enqueue call.
+- **RQ's `--burst` flag.** Use `soniq worker --run-once` instead. It drains the ready jobs and exits, which suits tests and cron-driven runs. Normal workers are long-lived.
 - **Exactly-once delivery.** Postgres alone cannot guarantee it. Make handlers idempotent.
 
 ## When you don't know

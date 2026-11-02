@@ -1,6 +1,10 @@
+---
+description: Send Soniq job metrics to Prometheus, statsd or Datadog with the MetricsSink protocol. Includes the built-in Prometheus sink and a custom sink example.
+---
+
 # Recipe: Custom Metrics Sink
 
-Soniq emits two events per job execution: `record_job_start` when the worker claims a job and `record_job_end` when the handler returns or raises. Plug in a `MetricsSink` to forward those events to your monitoring system.
+Soniq emits two events for each job run: `record_job_start` when the worker claims a job, and `record_job_end` when the handler returns or raises. Pass a `MetricsSink` to `Soniq(metrics_sink=...)` to send those events to Prometheus, statsd or another monitoring system.
 
 ## Protocol
 
@@ -32,11 +36,11 @@ class MetricsSink(Protocol):
     ) -> None: ...
 ```
 
-`status` is one of `done` (handler returned), `failed` (handler raised; retries remaining), `dead_letter` (retries exhausted, retry policy declined, or backend contract violation), or `snoozed` (handler returned `Snooze(...)`; not a retry burn).
+`status` is one of `done` (handler returned), `failed` (handler raised; retries remaining), `dead_letter` (retries exhausted, retry policy declined, or backend contract violation), `snoozed` (handler returned `Snooze(...)`; the job does not use a retry), or `reclaimed` (the handler ran so long that its job was requeued and claimed by another worker, so this run's outcome was dropped).
 
 ## Built-in: Prometheus
 
-`prometheus_client` ships with the default `pip install soniq` (batteries-included as of 0.0.2). Then:
+`pip install soniq` installs `prometheus_client`. Wire the sink like this:
 
 ```python
 from prometheus_client import start_http_server
@@ -60,7 +64,7 @@ Metrics exported (default prefix `soniq`):
 - `soniq_job_duration_seconds{queue, job_name, status}` (Histogram)
 - `soniq_jobs_in_progress{queue, job_name}` (Gauge)
 
-Buckets on the Histogram are sized for typical background-job latencies (`5ms`, `10ms`, ..., `60s`, `120s`, `300s`, `600s`, `+Inf`).
+The Histogram buckets cover typical background-job latencies (`5ms`, `10ms`, ..., `60s`, `120s`, `300s`, `600s`, `+Inf`).
 
 ### Custom prefix or registry
 
@@ -73,11 +77,11 @@ sink = PrometheusMetricsSink(registry=reg, prefix="myapp_jobs")
 soniq = Soniq(metrics_sink=sink)
 ```
 
-The sink does not start an HTTP server, push to a gateway, or scrape its own state - those are intentionally separate concerns. Use the `prometheus_client` helpers (`start_http_server`, `push_to_gateway`) per your scrape model.
+The sink does not start an HTTP server, push to a gateway, or scrape its own state - you do those yourself. Use the `prometheus_client` helpers (`start_http_server`, `push_to_gateway`) that match your scrape model.
 
 ## Custom sink: forward to your platform
 
-For Datadog, OpenTelemetry, statsd, or anything else, implement the Protocol directly:
+For Datadog, OpenTelemetry, statsd or any other system, implement the protocol directly:
 
 ```python
 import time
@@ -114,12 +118,12 @@ soniq = Soniq(metrics_sink=StatsdMetricsSink(statsd.StatsClient()))
 
 ## Combining with the noop default
 
-The default sink is `NoopMetricsSink` - silent, zero overhead. Soniq treats `metrics_sink=` as a strict opt-in: passing `None` (or omitting the parameter) means "no metrics emitted." This is intentional. Observability dependencies are real production overhead and should be a deliberate choice, not a default.
+The default sink is `NoopMetricsSink`. It emits nothing and adds no overhead. Metrics are opt-in: if you pass `None` or omit `metrics_sink=`, Soniq emits no metrics.
 
 ## Caveats
 
 - The sink is invoked by the worker, not by the enqueuer. `await soniq.enqueue(...)` does not call into the sink. If you need enqueue-time metrics, instrument your application code directly.
-- Sink methods that raise will propagate up and fail the job. Wrap your sink in a try/except if you want metrics to be best-effort:
+- If a sink method raises, the error propagates and fails the job. To make metrics best-effort, wrap your sink in try/except:
 
   ```python
   class BestEffortSink:

@@ -6,10 +6,11 @@ Management of permanently failed jobs, replay, bulk operations.
 import csv
 import json
 import logging
+import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
     from soniq.app import Soniq
 
 logger = logging.getLogger(__name__)
+
+
+def _private_opener(path: str, flags: int) -> int:
+    """Open an export file owner-only and refuse to follow a symlink."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
+
 
 _VALID_TABLE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 
@@ -34,6 +41,21 @@ class DeadLetterReason(str, Enum):
     TIMEOUT = "timeout"
     RESOURCE_EXHAUSTED = "resource_exhausted"
     MANUAL_MOVE = "manual_move"
+
+
+def _tags(value: Any) -> Optional[Dict[str, str]]:
+    """Tags as a dict. Soniq 0.1.0 stored some as a JSON string inside the
+    JSONB (encoded twice); migration 0006 fixes those rows, but a 0.1.0
+    worker still running can write more.
+
+    Tags Python can't decode (written straight to the table) read as None,
+    so one bad row doesn't break every listing."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError):
+            return None
+    return value  # type: ignore[no-any-return]
 
 
 @dataclass
@@ -364,7 +386,7 @@ class DeadLetterService:
                     moved_to_dead_letter_at=record["moved_to_dead_letter_at"],
                     resurrection_count=record["resurrection_count"],
                     last_resurrection_at=record["last_resurrection_at"],
-                    tags=record["tags"],
+                    tags=_tags(record["tags"]),
                 )
                 dead_jobs.append(dead_job)
 
@@ -400,7 +422,7 @@ class DeadLetterService:
                 moved_to_dead_letter_at=record["moved_to_dead_letter_at"],
                 resurrection_count=record["resurrection_count"],
                 last_resurrection_at=record["last_resurrection_at"],
-                tags=record["tags"],
+                tags=_tags(record["tags"]),
             )
 
     async def get_dead_letter_stats(
@@ -560,7 +582,7 @@ class DeadLetterService:
                 uuid.UUID(dead_letter_id),
             )
 
-            # JSONB codec returns a dict/None directly.
+            current_tags = _tags(current_tags)
             if current_tags:
                 current_tags.update(tags)
             else:
@@ -580,39 +602,49 @@ class DeadLetterService:
             return _rows_affected(result) == 1
 
     async def export_dead_letter_jobs(
-        self, filter_criteria: Optional[DeadLetterFilter] = None, format: str = "json"
+        self,
+        filter_criteria: Optional[DeadLetterFilter] = None,
+        format: str = "json",
+        output: Optional[str] = None,
     ) -> str:
-        """Export dead letter jobs to file"""
+        """Export dead letter jobs to a file.
+
+        Writes to ``output`` when given, otherwise to a timestamped file in
+        the current directory. Returns the path written.
+        """
         jobs = await self.list_dead_letter_jobs(filter_criteria)
 
         if format.lower() == "json":
             data = [asdict(job) for job in jobs]
-            filename = (
+            filename = output or (
                 f"dead_letter_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
 
-            with open(filename, "w") as f:
+            with open(filename, "w", opener=_private_opener) as f:
                 json.dump(data, f, indent=2, default=str)
 
             logger.info(f"Exported {len(jobs)} dead letter jobs to {filename}")
             return filename
 
         elif format.lower() == "csv":
-            filename = (
+            filename = output or (
                 f"dead_letter_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             )
 
-            if jobs:
-                with open(filename, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=asdict(jobs[0]).keys())
-                    writer.writeheader()
-                    for job in jobs:
-                        row = asdict(job)
-                        # Convert complex fields to strings
-                        row["args"] = json.dumps(row["args"])
-                        if row["tags"]:
-                            row["tags"] = json.dumps(row["tags"])
-                        writer.writerow(row)
+            # Header always comes from the dataclass so an empty export is
+            # still a valid CSV.
+            with open(filename, "w", newline="", opener=_private_opener) as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=[fld.name for fld in fields(DeadLetterJob)]
+                )
+                writer.writeheader()
+                for job in jobs:
+                    row = asdict(job)
+                    # Convert complex fields to strings
+                    row["args"] = json.dumps(row["args"])
+                    if row["tags"]:
+                        row["tags"] = json.dumps(row["tags"])
+                    writer.writerow(row)
 
             logger.info(f"Exported {len(jobs)} dead letter jobs to {filename}")
             return filename

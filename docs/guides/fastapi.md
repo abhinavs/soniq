@@ -1,6 +1,10 @@
-# FastAPI Integration
+---
+description: Run Python background jobs from FastAPI with Soniq and PostgreSQL. Use the lifespan helper, enqueue from routes, and move the worker to its own process.
+---
 
-Soniq's Instance API fits FastAPI well. You get explicit lifecycle control, clean dependency injection, and easy testing.
+# FastAPI background tasks with Soniq
+
+Soniq gives FastAPI durable background tasks stored in PostgreSQL. The `lifespan()` helper opens the connection pool, optionally starts a worker in the same process, and closes both on shutdown.
 
 ## Start with one process
 
@@ -30,7 +34,7 @@ async def create_user(name: str, email: str):
     return {"id": user.id, "queued": True}
 ```
 
-Run it with `uvicorn app.main:app`. That is all.
+Run it with `uvicorn app.main:app`.
 
 `lifespan()` takes these arguments:
 
@@ -43,17 +47,17 @@ Run it with `uvicorn app.main:app`. That is all.
 
 On startup, the helper initializes the connection pool and starts the worker. On shutdown, it stops the worker and closes the pool.
 
-The worker stops in the normal graceful way. It stops taking new jobs and waits for running jobs to finish. If a job runs longer than `shutdown_timeout` (30 seconds by default), Soniq cancels it and puts it back in the queue. No job is lost. See the [shutdown contract](../_internals/contracts/shutdown.md) for the full rules.
+The worker stops in the normal graceful way. It stops taking new jobs and waits for running jobs to finish. If a job runs longer than `shutdown_timeout` (30 seconds by default), Soniq cancels it and puts it back in the queue. See the [shutdown contract](../_internals/contracts/shutdown.md) for the full rules.
 
-Handlers can run again after a crash, so write them to be idempotent.
+A job can run again after a crash, so write handlers to be idempotent.
 
 !!! warning "Run migrations at deploy time, not app startup"
     Use `soniq setup` in your deploy pipeline (CI step, Dockerfile entrypoint, k8s init container). Do not run it in the lifespan. Running migrations on every boot creates race conditions when many replicas start at the same time.
 
 !!! warning "One Uvicorn process only"
-    With `run_worker=True`, each Uvicorn worker process starts its own Soniq worker. If you run `uvicorn --workers 4`, or Gunicorn with many workers, you get four Soniq workers with the `concurrency` you set. This is safe, because Soniq workers never claim the same job twice. But the total number of jobs that run at once is `processes x concurrency`. The database pool also grows with each process. Set `concurrency` with this in mind, or move the worker to its own process (next section).
+    With `run_worker=True`, each Uvicorn process starts its own Soniq worker. With `uvicorn --workers 4`, or Gunicorn with four workers, you get four Soniq workers. This is safe, because Soniq workers never claim the same job twice. The number of jobs that run at once is `processes x concurrency`, and the database pool grows with each process. Set `concurrency` with this in mind, or move the worker to its own process (see the next section).
 
-Also keep CPU-heavy jobs out of the API process. A job that blocks the event loop slows down your HTTP requests.
+Keep CPU-heavy jobs out of the API process. A job that blocks the event loop slows down your HTTP requests.
 
 ### Chain your own lifespan
 
@@ -111,7 +115,9 @@ soniq worker --concurrency 4
 
 Your job code and your `enqueue()` calls do not change.
 
-## Coming from BackgroundTasks
+<a id="coming-from-backgroundtasks"></a>
+
+## Replace FastAPI BackgroundTasks with a durable job queue
 
 FastAPI's `BackgroundTasks` runs a function after the response is sent, in the same process. If the process stops, the task is lost. It has no retries and no queue.
 
@@ -167,7 +173,7 @@ async def create_order(product_id: int, quantity: int):
 
 ## Multiple instances
 
-Each `Soniq` instance is fully isolated. It has its own connection pool and job registry. This is useful for multi-tenant setups. The helper takes one instance, so close the others in your own lifespan:
+Each `Soniq` instance is isolated. It has its own connection pool and job registry. This is useful for multi-tenant setups. The helper takes one instance, so close the others in your own lifespan:
 
 ```python
 tenant_a = Soniq(database_url="postgresql://localhost/tenant_a")
@@ -183,7 +189,7 @@ app = FastAPI(lifespan=lifespan(tenant_a, extra=close_tenant_b))
 
 ## Borrowing a connection
 
-For workflows like [transactional enqueue](transactional-enqueue.md), borrow a connection from the backend:
+For [transactional enqueue](transactional-enqueue.md), borrow a connection from the backend:
 
 ```python
 await soniq.ensure_initialized()
@@ -192,3 +198,9 @@ async with soniq.backend.acquire() as conn:
         await conn.execute("INSERT INTO orders ...")
         await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
+
+## Next steps
+
+- [Transactional enqueue](transactional-enqueue.md) - enqueue a job in the same transaction as your data
+- [Testing](testing.md) - test jobs with the memory backend
+- [Going to production](../production/going-to-production.md) - deploy the API and worker

@@ -93,6 +93,40 @@ async def test_cli_app_does_not_print_the_password(monkeypatch, capsys):
     async with cli_app(args):
         pass
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "s3cret" not in out
     assert "postgresql://u:***@localhost/db" in out
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:S3cretPW@h/db",
+        "postgresql://u:S3cret/PW@h/db",
+        "postgresql://u:S3cret#PW@h/db",
+        "postgresql://u:S3cret?PW@h/db",
+        "postgresql://u:S3cret[PW@h/db",
+        "postgresql://u:S3cret:PW@h/db",
+        "postgresql://u:S3cret@PW@h/db",
+        "postgresql://u:S3cretPW@h:5432/db?sslpassword=S3cretPW",
+        "postgresql://u@h/db?PASSWORD=S3cretPW",
+        "postgresql://h/db?user=u&password=S3cretPW&x=1",
+        "postgresql:///db?host=/tmp&password=S3cretPW",
+        "postgres://u:S3cretPW@[::1]:5432/db",
+        "postgresql://u:S3cretPW@h1:5432,h2:5432/db",
+    ],
+)
+def test_redact_url_never_leaks_the_secret(url):
+    from soniq.cli._helpers import redact_url
+
+    assert "S3cret" not in redact_url(url)
+    assert "PW" not in redact_url(url)
+
+
+def test_redact_url_keeps_other_query_params():
+    from soniq.cli._helpers import redact_url
+
+    out = redact_url(
+        "postgresql://h/db?sslmode=require&sslpassword=x&application_name=a"
+    )
+    assert out == "postgresql://h/db?sslmode=require&sslpassword=***&application_name=a"

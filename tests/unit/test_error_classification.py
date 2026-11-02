@@ -107,7 +107,7 @@ async def test_non_dict_args_raises_valueerror():
 
     job_meta = _make_job_meta(good_job)
 
-    with pytest.raises(ValueError, match="Backend contract violation"):
+    with pytest.raises(ValueError, match="must be a JSON object"):
         await _execute_job_safely(job_record, job_meta)
 
 

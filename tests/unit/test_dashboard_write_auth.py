@@ -19,16 +19,19 @@ class _FakeClient:
 
 
 class _FakeRequest:
+    # The guard reads the key the app was built with, from app.state.
+    api_key = None
+
     def __init__(self, *, client_host, host_header):
         self.client = _FakeClient(client_host) if client_host else None
         self.headers = {"host": host_header}
+        self.app = type(
+            "A", (), {"state": type("S", (), {"api_key": self.api_key})()}
+        )()
 
 
 def _set_api_key(monkeypatch, api_key=None):
-    if api_key is None:
-        monkeypatch.delenv("SONIQ_DASHBOARD_API_KEY", raising=False)
-    else:
-        monkeypatch.setenv("SONIQ_DASHBOARD_API_KEY", api_key)
+    monkeypatch.setattr(_FakeRequest, "api_key", api_key)
 
 
 def _set_write_enabled(monkeypatch, enabled: bool) -> None:

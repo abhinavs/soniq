@@ -1,24 +1,27 @@
-# Dead Letter Queue
+---
+description: How the Soniq dead-letter queue works on PostgreSQL - why Python jobs land there, and how to list, replay, delete, clean up and export them from CLI or code.
+---
 
-The dead-letter queue (DLQ) captures jobs that have exhausted all retries. They land in a separate `soniq_dead_letter_jobs` table where you can inspect, debug, and replay them.
+# Dead-letter queue: inspect and replay failed jobs
+
+The Soniq dead-letter queue (DLQ) holds jobs that failed for good. They move from `soniq_jobs` to a separate `soniq_dead_letter_jobs` table in PostgreSQL, where you can inspect, debug and replay them with the CLI or Python.
 
 ## Setup
 
 The DLQ table is part of the core schema. Run `soniq setup` once to create
-the schema; after that, any job that fails after its final retry attempt
-is moved into `soniq_dead_letter_jobs` automatically.
+the schema. After that, Soniq moves any job that fails its final attempt
+into `soniq_dead_letter_jobs` automatically.
 
 ## How jobs get there
 
 A job enters the DLQ when:
 
-- It has used all retry attempts and still fails (`max_retries_exceeded`)
-- It raises a permanent/unrecoverable error (`permanent_failure`)
-- The job function is no longer registered (`job_not_found`)
-- Arguments fail validation (`invalid_arguments`)
-- It exceeds its timeout after all retries (`timeout`)
+- It has used all retry attempts and still fails (`max_retries_exceeded`). A job that times out on every attempt ends here too.
+- The retry policy declines to retry the error (`permanent_failure`).
+- The job function is not registered in the worker (`job_not_found`).
+- The arguments fail validation (`invalid_arguments`).
 
-Each dead-letter record preserves the original job name, arguments, queue, priority, error message, and attempt count.
+Each dead-letter record keeps the original job name, arguments, queue, priority, error message, and attempt count.
 
 ## CLI management
 
@@ -27,8 +30,10 @@ Each dead-letter record preserves the original job name, arguments, queue, prior
 ```bash
 soniq dead-letter list
 soniq dead-letter list --limit 20
-soniq dead-letter list --filter "send_welcome_email"
+soniq dead-letter list --filter "emails.send_welcome_email"
 ```
+
+`--filter` matches the exact job name.
 
 ### Replay a job
 
@@ -37,13 +42,15 @@ reset to `queued` status. The original DLQ row stays as the audit trail and
 its `resurrection_count` is incremented:
 
 ```bash
-soniq dead-letter replay abc123-def456
+soniq dead-letter replay <job-id> --jobs-modules myapp.jobs
 ```
+
+The command needs your job modules loaded (`--jobs-modules`, `--app` or `SONIQ_JOBS_MODULES`). Soniq reads the job's retry limits from them.
 
 ### Delete a dead-letter job
 
 ```bash
-soniq dead-letter delete abc123-def456
+soniq dead-letter delete <job-id>
 ```
 
 ### Clean up old entries
@@ -101,7 +108,7 @@ print(f"Oldest job: {stats.oldest_job_age_hours:.1f} hours ago")
 
 ```python
 f = DeadLetterFilter(
-    job_names=["myapp.tasks.send_welcome_email"],
+    job_names=["emails.send_welcome_email"],
     reasons=["max_retries_exceeded"],
     limit=50,
 )
@@ -112,7 +119,7 @@ jobs = await soniq.dead_letter.list_dead_letter_jobs(f)
 ### Bulk operations
 
 ```python
-f = DeadLetterFilter(job_names=["myapp.tasks.sync_inventory"])
+f = DeadLetterFilter(job_names=["inventory.sync_inventory"])
 
 new_job_ids = await soniq.dead_letter.bulk_replay(
     f, reset_attempts=True, new_max_attempts=5
@@ -122,9 +129,9 @@ print(f"Replayed {len(new_job_ids)} jobs")
 
 ## Debugging a failed job
 
-When a job lands in the DLQ, follow this workflow:
+When a job lands in the DLQ, follow these steps:
 
-1. **Find it.** List dead-letter jobs filtered by job name or time range.
+1. **Find it.** List dead-letter jobs, filtered by job name or by date with `DeadLetterFilter`.
 
 2. **Read the error.** The `last_error` field contains the exception message from the final attempt.
 
@@ -135,18 +142,24 @@ When a job lands in the DLQ, follow this workflow:
     print(job.args)           # {"user_id": 42}
     ```
 
-3. **Fix the root cause.** Deploy a code fix, restore a downstream service, or correct the input data.
+3. **Fix the root cause.** Deploy a code fix, restore a downstream service or correct the input data.
 
-4. **Replay.** Create a new job from the dead-letter entry. The original arguments are preserved; the DLQ row stays as the audit trail.
+4. **Replay.** Create a new job from the dead-letter entry. Soniq keeps the original arguments, and the DLQ row stays as the audit trail.
 
     ```python
     new_id = await soniq.dead_letter.replay(job_id)
     ```
 
-5. **Verify.** Check that the replayed job completes successfully.
+5. **Verify.** Check that the replayed job completes.
 
     ```python
     status = await soniq.get_job(new_id)
     ```
 
-> **Tip:** Set up monitoring on `soniq.dead_letter.get_dead_letter_stats()` to alert when jobs accumulate in the DLQ. A growing DLQ usually signals a systemic issue -- a down service, a bad deploy, or a data problem.
+> **Tip:** Monitor `soniq.dead_letter.get_dead_letter_stats()` and alert when jobs build up in the DLQ. A growing DLQ usually means a systemic problem: a down service, a bad deploy or bad data.
+
+## Next steps
+
+- [Dead-letter CLI flags](../cli/commands.md#dead-letter)
+- [Dead-letter Python API](../api/dead-letter.md)
+- [Dashboard](../dashboard/overview.md) to replay failed jobs in write mode

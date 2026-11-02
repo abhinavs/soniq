@@ -1,8 +1,12 @@
-# 1. Defining jobs
+---
+description: Define and enqueue Python background jobs with Soniq. Learn the @soniq.job decorator, keyword-only arguments, job status, JobContext and Pydantic validation.
+---
 
-> **Beginner** - 5 minutes. The decorator, enqueueing, and what a job actually is.
+# 1. Define and enqueue background jobs in Python
 
-A job is a Python function that runs in the background. You define it with a decorator, enqueue it with arguments, and a worker picks it up and runs it.
+> **Beginner** - 5 minutes. The decorator, enqueueing, and what a job is.
+
+A Soniq job is a Python function that runs in the background on a worker. You define the job with the `@soniq.job()` decorator and enqueue it with arguments. A worker then claims the job from PostgreSQL and runs it.
 
 ## Defining a job
 
@@ -17,9 +21,9 @@ async def send_welcome_email(user_id: int, template: str = "default"):
     await send_email(user.email, template)
 ```
 
-That is it. The `@soniq.job` decorator registers the function so Soniq knows about it. The function itself is a normal `async def` - you can call it directly in tests, or you can enqueue it as a background job.
+The `@soniq.job()` decorator registers the function with Soniq. The function stays a normal `async def`. You can call it directly in tests, or enqueue it as a background job.
 
-`name=` is the *task name*: the string stored in each job's row and used to find the handler again. Leave it out and Soniq derives one from the module path (`myapp.tasks.send_welcome_email`), but that's deprecated since 0.2.0 and prints a warning. Pick the name yourself.
+`name=` is the *task name*. Soniq stores it in each job row and uses it to find the handler again. If you leave it out, Soniq derives a name from the module path (`myapp.tasks.send_welcome_email`). That behavior is deprecated since 0.2.0 and prints a warning. Always set the name yourself.
 
 ## Enqueuing a job
 
@@ -27,13 +31,13 @@ That is it. The `@soniq.job` decorator registers the function so Soniq knows abo
 job_id = await soniq.enqueue(send_welcome_email, user_id=42)
 ```
 
-`enqueue` writes a row into Soniq's job table. The next available worker will claim that row, run `send_welcome_email(user_id=42)`, and mark the row done.
+`enqueue` writes a row into the `soniq_jobs` table. The next free worker claims the row, runs `send_welcome_email(user_id=42)`, and marks the row done.
 
-A few things to notice:
+Note these points:
 
-- `enqueue` is a coroutine. You have to `await` it. (If you forget, Python will warn you with `RuntimeWarning: coroutine was never awaited`.)
-- Arguments are keyword-only. There is no `enqueue(send_welcome_email, 42)`; it is always `user_id=42`. This makes job calls self-documenting and migration-safe - reordering parameters in your function does not silently break enqueued jobs.
-- `enqueue` returns a job id you can use later to check status or cancel.
+- `enqueue` is a coroutine. You must `await` it. If you forget, Python warns `RuntimeWarning: coroutine was never awaited`.
+- Job arguments are keyword-only. Write `user_id=42`, not `enqueue(send_welcome_email, 42)`. Keyword arguments keep stored jobs valid when you reorder the parameters of your function.
+- `enqueue` returns a job id. Use the id later to check the status or to cancel the job.
 
 You can also call `.enqueue()` on the job function itself:
 
@@ -41,11 +45,11 @@ You can also call `.enqueue()` on the job function itself:
 job_id = await send_welcome_email.enqueue(user_id=42)
 ```
 
-This does the same thing as `soniq.enqueue(send_welcome_email, user_id=42)`. A type checker such as mypy or pyright checks the arguments against the function signature. Both forms are supported. `soniq.enqueue(...)` is not deprecated. See [job.enqueue() and job.options()](../api/jobs.md#jobenqueue-and-joboptions).
+This does the same as `soniq.enqueue(send_welcome_email, user_id=42)`. A type checker such as mypy or pyright checks the arguments against the function signature. Soniq supports both forms. `soniq.enqueue(...)` is not deprecated. See [job.enqueue() and job.options()](../api/jobs.md#jobenqueue-and-joboptions).
 
 ## Job status lifecycle
 
-Every enqueued job lives in one of these states:
+Every enqueued job is in one of these states:
 
 ```mermaid
 stateDiagram-v2
@@ -61,12 +65,12 @@ You can check a job's status at any time:
 
 ```python
 job = await soniq.get_job(job_id)
-print(job["status"])   # "queued", "processing", "done", "cancelled"
+print(job["status"])   # "queued", "processing", "done" or "cancelled"
 
 result = await soniq.get_result(job_id)  # return value of a completed job
 ```
 
-The "exhausted" arrow points to the **dead-letter queue** - a separate table (`soniq_dead_letter_jobs`) that holds jobs that failed every retry. Think of it as a holding area you can inspect and replay from. Retries themselves are covered in [chapter 3](03-retries.md).
+The "exhausted" arrow points to the **dead-letter queue**. This is a separate table, `soniq_dead_letter_jobs`, that holds jobs that failed every retry. You can inspect these jobs and replay them. [Chapter 3](03-retries.md) covers retries.
 
 ### Managing jobs
 
@@ -76,7 +80,7 @@ await soniq.delete_job(job_id)    # remove a job entirely
 await soniq.list_jobs(queue="billing", status="queued", limit=20)
 ```
 
-To re-run a job whose retries have been exhausted, replay it from the dead-letter table:
+To run a job again after it used all its retries, replay it from the dead-letter table:
 
 ```python
 new_job_id = await soniq.dead_letter.replay(job_id)
@@ -84,17 +88,17 @@ new_job_id = await soniq.dead_letter.replay(job_id)
 
 ## Going further
 
-The rest of this page covers features you can come back to later. The basics above are enough to keep working through the tutorial.
+The rest of this page covers features you can read later. The sections above are enough for the next chapters.
 
 ### Decorator options at a glance
 
-`@soniq.job` accepts several optional parameters - timeout, priority, retry settings, deduplication, argument validation. Each shows up later in the tutorial when it matters. The full list lives in the [Jobs API reference](../api/jobs.md).
+`@soniq.job()` accepts these optional parameters: `timeout`, `priority`, `queue`, `unique`, the retry settings, and `validate`. Later chapters explain each one. The [Jobs API reference](../api/jobs.md) has the full list.
 
 Always write the parentheses: `@soniq.job()`. The bare form `@soniq.job` is not supported.
 
 ### Task names across services
 
-An explicit name also means renaming or moving the function doesn't break jobs already in the queue. That matters most when a producer and a consumer live in different codebases:
+An explicit name lets you rename or move the function without breaking jobs already in the queue. This matters most when the producer and the consumer are in different codebases:
 
 ```python
 @soniq.job(name="users.send_welcome_email")
@@ -108,7 +112,7 @@ The producer can then enqueue the job by string name, without importing the cons
 await soniq.enqueue("users.send_welcome_email", args={"user_id": 42})
 ```
 
-There is also a typed `TaskRef` form. See [cross-service jobs](../guides/cross-service-jobs.md) for the full picture.
+A typed `TaskRef` form also exists. See [cross-service jobs](../guides/cross-service-jobs.md).
 
 ### Per-enqueue overrides
 
@@ -134,7 +138,7 @@ job_id = await send_welcome_email.options(
 
 ### JobContext: runtime metadata in your handler
 
-Add a parameter typed as `JobContext` and Soniq injects metadata about the running job - id, attempt number, worker, queue:
+Add a parameter with the type `JobContext`. Soniq then passes in metadata about the running job: id, attempt number, worker, and queue.
 
 ```python
 from soniq import JobContext
@@ -144,11 +148,11 @@ async def process_invoice(invoice_id: str, ctx: JobContext):
     print(f"Job {ctx.job_id}, attempt {ctx.attempt} of {ctx.max_attempts}")
 ```
 
-Useful for logging, structured tracing, and conditional logic on retry attempts. Full field list in the [Jobs API reference](../api/jobs.md#jobcontext).
+Use it for logging, tracing, and logic that depends on the retry attempt. Do not pass it when you enqueue. The [Jobs API reference](../api/jobs.md#jobcontext) lists all fields.
 
 ### Argument validation with Pydantic
 
-Pass a Pydantic model as `validate=` to reject bad arguments at enqueue time, instead of letting the job fail in a worker:
+Pass a Pydantic model as `validate=`. Soniq then rejects bad arguments when you enqueue, not later in a worker:
 
 ```python
 from pydantic import BaseModel
@@ -161,19 +165,24 @@ class EmailArgs(BaseModel):
 async def send_welcome_email(user_id: int, template: str = "default"):
     ...
 
-# Raises a validation error at the call site - the job never enqueues.
+# Raises SoniqError at the call site. The job is not enqueued.
 await soniq.enqueue(send_welcome_email, user_id="not_an_int")
 ```
 
 ### Transactional enqueue (preview)
 
-You can enqueue a job inside the same database transaction as your business write. If the transaction rolls back, the job is never created.
+You can enqueue a job inside the same database transaction as your business write. If the transaction rolls back, Soniq does not create the job.
 
 ```python
+await soniq.ensure_initialized()   # soniq.backend is None until this runs
 async with soniq.backend.acquire() as conn:
     async with conn.transaction():
         await conn.execute("INSERT INTO orders ...")
         await soniq.enqueue(send_welcome_email, connection=conn, user_id=42)
 ```
 
-This pattern gets a chapter to itself - see [chapter 6](06-transactional-enqueue.md).
+[Chapter 6](06-transactional-enqueue.md) covers this pattern in full.
+
+## Next steps
+
+Continue with [chapter 2: running workers](02-running-workers.md).

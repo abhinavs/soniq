@@ -1,9 +1,10 @@
+---
+description: Share typed task references between two Python services with Soniq task_ref stubs. A producer enqueues PostgreSQL jobs without importing the consumer.
+---
+
 # Cross-service task stubs
 
-This recipe shows how to share typed task references between two services
-without either side importing the other's implementation. The producer
-gets compile-time argument validation, the consumer keeps full control
-of the handler, and the wire is just a task name plus a JSON args dict.
+This recipe shares typed task references between two Soniq services without either side importing the other's code. The producer validates arguments against a Pydantic model before it writes the job to PostgreSQL. The consumer owns the handler. The wire format is a task name plus a JSON args dict.
 
 The pattern: a tiny stub package, importable by both services, that
 contains nothing but `task_ref(...)` declarations.
@@ -132,9 +133,9 @@ The consumer:
 - **No implementation crosses the wire.** The stub package contains
   schemas and names. The producer never imports the consumer's
   handler module; the consumer never imports the producer's soniq.
-- **Typed at the call site.** The producer's IDE knows
-  `args=InvoiceArgs(...)` is what `send_invoice` expects, because the
-  TaskRef carries `args_model=InvoiceArgs`.
+- **Validated at the call site.** The `TaskRef` carries
+  `args_model=InvoiceArgs`. `enqueue` checks the `args` dict against
+  that model before it writes the row.
 - **Renames are cheap.** Renaming the consumer's handler does not
   break producers, because the wire identifier is `send_invoice.name`,
   not the Python name.
@@ -144,8 +145,8 @@ The consumer:
 
 ## Versioning convention
 
-Stub packages should use a dotted suffix in the task name so two
-shapes can coexist:
+Give each task name a version suffix, so two argument shapes can
+coexist:
 
 ```python
 # good
@@ -161,6 +162,6 @@ dispatch at the v2 handler; new producers move to v3.
 
 ## Drift detection
 
-The dead-letter queue is the operational signal of drift: rows with
-reason `Job <name> not registered` flag a producer using a name that
-no consumer has registered.
+The dead-letter queue shows drift. A dead-letter row with reason
+`job_not_found` and error `Job <name> not registered.` means a producer
+used a name that no consumer has registered.

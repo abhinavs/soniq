@@ -1,5 +1,6 @@
 """SQLite storage backend. Zero-setup local dev, single-writer, polling only."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,10 @@ from soniq.types import QueueStats
 
 logger = logging.getLogger(__name__)
 
+# Limits an outcome write to the claim that made it (see the Postgres backend).
+# Takes claimed_attempts twice; None skips the check.
+_CLAIM_GUARD = "AND (? IS NULL OR (status='processing' AND attempts=?))"
+
 try:
     import aiosqlite
 except ImportError:
@@ -21,7 +26,7 @@ def _require_aiosqlite() -> None:
     if aiosqlite is None:
         raise ImportError(
             "aiosqlite is required for the SQLite backend. "
-            "Install it with: pip install soniq[sqlite]"
+            "Install it with: pip install 'soniq[sqlite]'"
         )
 
 
@@ -31,6 +36,12 @@ class SQLiteBackend:
         _require_aiosqlite()
         self._path = path
         self._conn: Optional[aiosqlite.Connection] = None
+        # Every caller shares one connection, so a SELECT-then-write can
+        # interleave with another coroutine's between awaits. This lock makes
+        # the check-and-insert in create_job and the claim in
+        # fetch_and_lock_job atomic.
+        # ponytail: in-process only; two processes on one file can still race.
+        self._write_lock = asyncio.Lock()
 
     @property
     def supports_push_notify(self) -> bool:
@@ -181,55 +192,56 @@ class SQLiteBackend:
         assert self._conn is not None
         now = _now_iso()
 
-        if unique and args_hash:
-            async with self._conn.execute(
+        async with self._write_lock:
+            if unique and args_hash:
+                async with self._conn.execute(
+                    """
+                    SELECT id FROM soniq_jobs
+                    WHERE job_name = ? AND args_hash = ? AND status = 'queued' AND unique_job = 1
+                    """,
+                    (job_name, args_hash),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return str(row["id"])
+
+            if dedup_key is not None:
+                async with self._conn.execute(
+                    "SELECT id FROM soniq_jobs WHERE dedup_key = ? AND status = 'queued'",
+                    (dedup_key,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return str(row["id"])
+
+            sched = scheduled_at.isoformat() if scheduled_at else None
+            args_serialized = to_json(args)
+            await self._conn.execute(
                 """
-                SELECT id FROM soniq_jobs
-                WHERE job_name = ? AND args_hash = ? AND status = 'queued' AND unique_job = 1
+                INSERT INTO soniq_jobs
+                    (id, job_name, args, args_hash, max_attempts, priority, queue,
+                     unique_job, dedup_key, scheduled_at, producer_id, created_at,
+                     updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_name, args_hash),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return str(row["id"])
-
-        if dedup_key:
-            async with self._conn.execute(
-                "SELECT id FROM soniq_jobs WHERE dedup_key = ? AND status = 'queued'",
-                (dedup_key,),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return str(row["id"])
-
-        sched = scheduled_at.isoformat() if scheduled_at else None
-        args_serialized = to_json(args)
-        await self._conn.execute(
-            """
-            INSERT INTO soniq_jobs
-                (id, job_name, args, args_hash, max_attempts, priority, queue,
-                 unique_job, dedup_key, scheduled_at, producer_id, created_at,
-                 updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                job_id,
-                job_name,
-                args_serialized,
-                args_hash,
-                max_attempts,
-                priority,
-                queue,
-                1 if unique else 0,
-                dedup_key,
-                sched,
-                producer_id,
-                now,
-                now,
-            ),
-        )
-        await self._conn.commit()
-        return job_id
+                (
+                    job_id,
+                    job_name,
+                    args_serialized,
+                    args_hash,
+                    max_attempts,
+                    priority,
+                    queue,
+                    1 if unique else 0,
+                    dedup_key,
+                    sched,
+                    producer_id,
+                    now,
+                    now,
+                ),
+            )
+            await self._conn.commit()
+            return job_id
 
     async def fetch_and_lock_job(
         self,
@@ -261,7 +273,7 @@ class SQLiteBackend:
             """
             params = (now,)
 
-        async with self._conn.execute(query, params) as cursor:
+        async with self._write_lock, self._conn.execute(query, params) as cursor:
             row = await cursor.fetchone()
             if not row:
                 return None
@@ -285,26 +297,35 @@ class SQLiteBackend:
         pass  # No push notification
 
     async def mark_job_done(
-        self, job_id: str, *, result_ttl: Optional[int] = None, result: Any = None
-    ) -> None:
+        self,
+        job_id: str,
+        *,
+        result_ttl: Optional[int] = None,
+        result: Any = None,
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         assert self._conn is not None
+        guard = (claimed_attempts, claimed_attempts)
         if result_ttl is not None and result_ttl == 0:
-            await self._conn.execute("DELETE FROM soniq_jobs WHERE id=?", (job_id,))
+            cursor = await self._conn.execute(
+                f"DELETE FROM soniq_jobs WHERE id=? {_CLAIM_GUARD}", (job_id, *guard)
+            )
         else:
             ttl = result_ttl if result_ttl is not None else 3600
             expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
             if result is None:
-                await self._conn.execute(
-                    "UPDATE soniq_jobs SET status='done', expires_at=?, updated_at=? WHERE id=?",
-                    (expires, _now_iso(), job_id),
+                cursor = await self._conn.execute(
+                    f"UPDATE soniq_jobs SET status='done', expires_at=?, updated_at=? WHERE id=? {_CLAIM_GUARD}",
+                    (expires, _now_iso(), job_id, *guard),
                 )
             else:
                 result_json = to_json(result)
-                await self._conn.execute(
-                    "UPDATE soniq_jobs SET status='done', result=?, expires_at=?, updated_at=? WHERE id=?",
-                    (result_json, expires, _now_iso(), job_id),
+                cursor = await self._conn.execute(
+                    f"UPDATE soniq_jobs SET status='done', result=?, expires_at=?, updated_at=? WHERE id=? {_CLAIM_GUARD}",
+                    (result_json, expires, _now_iso(), job_id, *guard),
                 )
         await self._conn.commit()
+        return cursor.rowcount == 1
 
     async def mark_job_failed(
         self,
@@ -313,22 +334,25 @@ class SQLiteBackend:
         attempts: int,
         error: str,
         retry_delay: Optional[float] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         assert self._conn is not None
+        guard = (claimed_attempts, claimed_attempts)
         if retry_delay and retry_delay > 0:
             sched = (
                 datetime.now(timezone.utc) + timedelta(seconds=retry_delay)
             ).isoformat()
-            await self._conn.execute(
-                "UPDATE soniq_jobs SET status='queued', attempts=?, last_error=?, scheduled_at=?, updated_at=? WHERE id=?",
-                (attempts, error, sched, _now_iso(), job_id),
+            cursor = await self._conn.execute(
+                f"UPDATE soniq_jobs SET status='queued', attempts=?, last_error=?, scheduled_at=?, updated_at=? WHERE id=? {_CLAIM_GUARD}",
+                (attempts, error, sched, _now_iso(), job_id, *guard),
             )
         else:
-            await self._conn.execute(
-                "UPDATE soniq_jobs SET status='queued', attempts=?, last_error=?, scheduled_at=NULL, updated_at=? WHERE id=?",
-                (attempts, error, _now_iso(), job_id),
+            cursor = await self._conn.execute(
+                f"UPDATE soniq_jobs SET status='queued', attempts=?, last_error=?, scheduled_at=NULL, updated_at=? WHERE id=? {_CLAIM_GUARD}",
+                (attempts, error, _now_iso(), job_id, *guard),
             )
         await self._conn.commit()
+        return cursor.rowcount == 1
 
     async def mark_job_dead_letter(
         self,
@@ -338,17 +362,18 @@ class SQLiteBackend:
         error: str,
         reason: str,
         tags: Optional[dict] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         # DLQ Option A: move row to soniq_dead_letter_jobs. aiosqlite's implicit transaction
         # keeps both tables consistent on crash; the Python lock on self._conn prevents races.
         assert self._conn is not None
         async with self._conn.execute(
-            "SELECT * FROM soniq_jobs WHERE id=?",
-            (job_id,),
+            f"SELECT * FROM soniq_jobs WHERE id=? {_CLAIM_GUARD}",
+            (job_id, claimed_attempts, claimed_attempts),
         ) as cursor:
             row = await cursor.fetchone()
             if row is None:
-                return
+                return False
         now = _now_iso()
         tags_json = to_json(tags) if tags is not None else None
         await self._conn.execute(
@@ -381,6 +406,7 @@ class SQLiteBackend:
             (job_id,),
         )
         await self._conn.commit()
+        return True
 
     async def nack_job(self, job_id: str) -> None:
         assert self._conn is not None
@@ -399,17 +425,27 @@ class SQLiteBackend:
         delay_seconds: float,
         attempts: int,
         reason: Optional[str] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         assert self._conn is not None
         sched = (
             datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         ).isoformat()
         reason_text = f"SNOOZE: {reason}" if reason else "SNOOZE"
-        await self._conn.execute(
-            "UPDATE soniq_jobs SET status='queued', attempts=?, scheduled_at=?, last_error=?, updated_at=? WHERE id=?",
-            (attempts, sched, reason_text, _now_iso(), job_id),
+        cursor = await self._conn.execute(
+            f"UPDATE soniq_jobs SET status='queued', attempts=?, scheduled_at=?, last_error=?, updated_at=? WHERE id=? {_CLAIM_GUARD}",
+            (
+                attempts,
+                sched,
+                reason_text,
+                _now_iso(),
+                job_id,
+                claimed_attempts,
+                claimed_attempts,
+            ),
         )
         await self._conn.commit()
+        return cursor.rowcount == 1
 
     async def cancel_job(self, job_id: str) -> bool:
         assert self._conn is not None
@@ -624,11 +660,11 @@ def _sqlite_row_to_dict(row: Any) -> dict:
     if isinstance(d.get("args"), str):
         try:
             d["args"] = json.loads(d["args"])
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, RecursionError, TypeError):
             pass
     if "result" in d and isinstance(d["result"], str):
         try:
             d["result"] = json.loads(d["result"])
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, RecursionError, TypeError):
             pass
     return d

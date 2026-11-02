@@ -1,20 +1,24 @@
-# Transactional Enqueue
+---
+description: Enqueue Soniq background jobs inside a PostgreSQL transaction with SQLAlchemy, asyncpg or psycopg 3. If the transaction rolls back, the job is never queued.
+---
 
-Enqueue a job inside a database transaction. If the transaction rolls back, the job never enters the queue.
+# Transactional enqueue: add a job in the same PostgreSQL transaction
+
+Soniq can write a job row on the same PostgreSQL connection as your business data. If your transaction rolls back, the job rolls back too. This works with SQLAlchemy async, raw asyncpg, and psycopg 3.
 
 ## How it works
 
-When you pass `connection=conn` to `enqueue()`, the job row is inserted into `soniq_jobs` using that connection. The INSERT is part of your transaction, so the job only becomes visible to workers after `COMMIT`.
-
-Either both your business data and the job are committed, or neither is.
+When you pass `connection=conn` to `enqueue()`, Soniq inserts the job row into `soniq_jobs` on that connection. The INSERT is part of your transaction, so workers see the job only after `COMMIT`. Your business data and the job are either both committed or both rolled back.
 
 <a id="pattern-3-sqlalchemy-async"></a>
 
 ## Pattern 1: Pass your SQLAlchemy session
 
-If your app uses SQLAlchemy async, pass the `AsyncSession` as `connection=`. Soniq writes the job on the same connection, inside the same transaction:
+If your app uses SQLAlchemy async, pass the `AsyncSession` as `connection=`. Soniq writes the job on the same connection, in the same transaction:
 
 ```python
+import os
+
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 from soniq import Soniq
@@ -54,13 +58,13 @@ Rules:
 
 Soniq does not import SQLAlchemy unless you pass a SQLAlchemy object.
 
-## Raw asyncpg connections (still supported)
+## Raw asyncpg connections
 
-You can also pass any raw `asyncpg` connection inside an active transaction. It can come from Soniq's pool or from your own pool. The patterns below still work.
+You can also pass a raw `asyncpg` connection. It can come from Soniq's pool or from your own pool. The connection must be inside an active transaction. Without one, `enqueue()` raises a `SoniqError` with code `SONIQ_UNSUPPORTED_CONNECTION`.
 
 ## Pattern 2: Raw asyncpg via Soniq's pool
 
-The simplest pattern. Borrow a connection from Soniq's own backend pool. No second pool, no extraction step:
+Borrow a connection from Soniq's own backend pool. You need no second pool:
 
 ```python
 await soniq.ensure_initialized()
@@ -70,11 +74,11 @@ async with soniq.backend.acquire() as conn:
         await soniq.enqueue(send_invoice, connection=conn, order_id=order_id)
 ```
 
-The `connection=conn` parameter is the only thing that changes from a normal enqueue call. Everything else works the same -- job options, priority, scheduling.
+The `connection=conn` parameter is the only thing that changes from a normal enqueue call. Job options, priority and scheduling work the same way.
 
 ## FastAPI route example
 
-A real-world order creation endpoint where the order record and the follow-up job are committed atomically:
+This order endpoint commits the order record and the follow-up job in one transaction:
 
 ```python
 from contextlib import asynccontextmanager
@@ -115,7 +119,7 @@ If the INSERT fails or anything else raises inside the transaction block, both t
 
 ## Pattern 3: Bring your own asyncpg pool
 
-If your app already manages its own `asyncpg.Pool` (common in apps that predate Soniq), you don't need to involve Soniq's pool at all. Pass the connection from *your* pool to `enqueue` and the job row goes through your transaction:
+If your app already manages its own `asyncpg.Pool`, you do not need Soniq's pool. Pass the connection from your pool to `enqueue()` and the job row goes through your transaction:
 
 ```python
 from contextlib import asynccontextmanager
@@ -147,13 +151,14 @@ async def create_order(product_id: int, quantity: int):
     return {"order_id": order_id}
 ```
 
-This is the cleanest pattern when you have an existing pool: there is no extraction step and no second pool to size. Soniq is a passenger on a connection your app already owned.
+With this pattern you have no second pool to size. Soniq uses a connection that your app already owns.
 
-> Both pools must point at the **same Postgres database**. Soniq's job tables and your application tables share one database; the connection just has to be in a transaction on that database.
+!!! note
+    The connection must point at the same PostgreSQL database that holds the Soniq tables.
 
 ## psycopg 3 connections
 
-You can pass a `psycopg.AsyncConnection` too. Soniq writes the job on that connection and does not commit. You commit or roll back as usual:
+You can pass a `psycopg.AsyncConnection` too. Soniq writes the job on that connection and does not commit. You commit or roll back yourself:
 
 ```python
 import psycopg
@@ -166,9 +171,9 @@ async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
 
 Install the driver with `pip install "soniq[psycopg]"`.
 
-## Pattern 4: Tortoise ORM (still supported)
+## Pattern 4: Tortoise ORM
 
-Tortoise exposes the raw `asyncpg` connection on the transaction context, but only via a private attribute. It works today; treat it as a soft API.
+Tortoise exposes the raw `asyncpg` connection on the transaction context only through a private attribute. The attribute works today, but Tortoise can change it in any release.
 
 ```python
 from tortoise.transactions import in_transaction
@@ -181,33 +186,40 @@ async def create_order(product_id: int, quantity: int):
             product_id=product_id,
             quantity=quantity,
         )
-        # conn._connection is the raw asyncpg connection. Private attribute,
-        # works in current Tortoise releases. A first-class Tortoise integration
-        # is on the roadmap.
+        # conn._connection is the raw asyncpg connection. It is a private
+        # Tortoise attribute, so it can break in a Tortoise upgrade.
         await soniq.enqueue(send_invoice, connection=conn._connection, order_id=order.id)
 ```
 
-If you'd like first-class Tortoise support that does not depend on a private attribute, please open an issue -- it's not a hard integration to write, we just want to gauge demand before adding the dependency.
+Soniq has no Tortoise integration. If you want one that does not depend on a private attribute, open an issue.
 
 ## Use cases
 
-**Order + invoice.** Create the order and enqueue the invoice generation in one transaction. No orphaned orders without invoices.
+**Order and invoice.** Create the order and enqueue the invoice job in one transaction. No order exists without its invoice job.
 
-**User signup + welcome email.** Insert the user row and enqueue the welcome email together. If the INSERT hits a unique constraint, no phantom email gets sent.
+**User signup and welcome email.** Insert the user row and enqueue the welcome email together. If the INSERT hits a unique constraint, Soniq queues no email.
 
-**Payment + receipt.** Record the payment and enqueue the receipt delivery atomically. No "payment recorded but receipt never sent" bugs.
+**Payment and receipt.** Record the payment and enqueue the receipt job in one transaction. A recorded payment always has a receipt job.
 
-The common thread: any workflow where "row exists but job is missing" would be a data integrity bug.
+Use this pattern when a row without its job would be a data integrity bug.
 
 ## Delivery semantics
 
 Transactional enqueue guarantees the job enters the queue if and only if the transaction commits. It does not guarantee single execution.
 
-Soniq provides **at-least-once delivery**. If a worker crashes after executing the job but before marking it done, stale worker recovery will re-queue it. Design your job functions to be idempotent -- use upserts, deduplication keys, or check-before-act patterns for side effects like sending emails or charging payments.
+Soniq provides **at-least-once delivery**. If a worker crashes after it runs the job but before it marks the job done, stale worker recovery puts the job back in the queue. Write idempotent handlers. Use upserts, deduplication keys, or check-before-act patterns for side effects such as sending emails or charging payments.
 
 ## What transactional enqueue does NOT guarantee
 
 - **Single execution.** The guarantee applies to enqueue only. Re-execution after worker crashes is still possible.
-- **Rollback after commit.** Once committed, the job is in the queue. You can cancel it with `soniq.cancel_job(job_id)`, but a fast worker might pick it up first.
+- **Rollback after commit.** After the commit, the job is in the queue. You can cancel it with `soniq.cancel_job(job_id)`, but a fast worker can claim it first.
 
-> **Note:** Transactional enqueue requires PostgreSQL. It is not available with the SQLite or Memory backends. Calling `enqueue(..., connection=conn)` on a non-PostgreSQL backend raises a `ValueError`.
+!!! note
+    Transactional enqueue needs PostgreSQL. With the SQLite or memory backend, `enqueue(..., connection=conn)` and `soniq.backend.acquire()` raise a `ValueError`.
+
+## Next steps
+
+- [FastAPI integration](fastapi.md) - set up the lifespan and the worker
+- [Common patterns](common-patterns.md) - deduplication and job results
+- [Troubleshooting](../troubleshooting.md) - fix `SONIQ_UNSUPPORTED_CONNECTION` errors
+

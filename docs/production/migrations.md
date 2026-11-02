@@ -1,9 +1,12 @@
+---
+description: Export the Soniq PostgreSQL schema as an Alembic revision or plain SQL with soniq migrations export, and add later Soniq migrations to Alembic.
+---
+
 # Migrations with Alembic
 
-`soniq setup` applies the Soniq schema. If your team manages the database
-schema with Alembic, you can export the Soniq schema as an Alembic revision
-instead. Alembic then owns every schema change, and `soniq setup` has
-nothing left to do.
+If Alembic manages your database schema, run `soniq migrations export --alembic` to turn the Soniq schema into an Alembic revision. Alembic then owns every schema change, and `soniq setup` has nothing left to do.
+
+> **Warning:** Use Alembic or `soniq setup` on one database, not both. The exported revision has no downgrade. See [Limits](#limits).
 
 ## Export a revision
 
@@ -59,3 +62,8 @@ If you also run `soniq setup`, it applies the migrations again.
 - The revision has no downgrade. `downgrade()` raises an error. Drop the
   `soniq_*` tables by hand if you must remove Soniq.
 - Do not mix tools on one database. Use Alembic or `soniq setup`, not both.
+
+## Next steps
+
+- [Upgrading from 0.1.0](upgrading.md) - the 0006 migration and deploy order
+- [CLI commands](../cli/commands.md) - every `soniq` subcommand and flag

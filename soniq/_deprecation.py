@@ -22,7 +22,13 @@ class SoniqDeprecationWarning(DeprecationWarning):
 
 
 def warn_deprecated(
-    what: str, *, since: str, removed_in: str, use_instead: str, stacklevel: int = 2
+    what: str,
+    *,
+    since: str,
+    removed_in: str,
+    use_instead: str,
+    note: str = "",
+    stacklevel: int = 2,
 ) -> None:
     """Warn that ``what`` is deprecated.
 
@@ -38,6 +44,8 @@ def warn_deprecated(
         f"{what} is deprecated since Soniq {since} and will be removed in "
         f"{removed_in}. Use {use_instead} instead."
     )
+    if note:
+        message += " " + note
     if mode == "error":
         raise SoniqDeprecationWarning(message)
 

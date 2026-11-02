@@ -51,6 +51,8 @@ def build() -> str:
     parts.append("\n---\n")
     for i, (title, path, _) in enumerate(PAGES, 1):
         body = (ROOT / "docs" / path).read_text().strip()
+        if body.startswith("---\n"):  # drop YAML front matter
+            body = body.split("\n---\n", 1)[1].strip()
         parts.append(f"\n# Page {i}: {title}\n\n*(source: docs/{path})*\n\n{body}\n\n")
         parts.append("---\n" if i < len(PAGES) else "")
     return "\n".join(parts).rstrip() + "\n"

@@ -160,8 +160,19 @@ class JobStore(Protocol):
         *,
         result_ttl: Optional[int] = None,
         result: Any = None,
-    ) -> None:
-        """Mark job as done. If result_ttl=0, delete immediately."""
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
+        """Mark job as done. If result_ttl=0, delete immediately.
+
+        ``claimed_attempts`` guards against a late outcome. When set, the
+        write applies only while the job is still ``processing`` with that
+        ``attempts`` count, the claim the caller made. A stale-worker sweep
+        and a new claim bump ``attempts``, so the old worker's write misses.
+        None writes unconditionally. The same applies to
+        ``mark_job_failed``, ``mark_job_dead_letter`` and ``reschedule_job``.
+
+        Return True if the job was written, False if no row matched.
+        """
         ...
 
     async def mark_job_failed(
@@ -171,7 +182,8 @@ class JobStore(Protocol):
         attempts: int,
         error: str,
         retry_delay: Optional[float] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         """
         Mark job as failed.
 
@@ -188,7 +200,8 @@ class JobStore(Protocol):
         error: str,
         reason: str,
         tags: Optional[dict] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         """Move a job out of ``soniq_jobs`` and into ``soniq_dead_letter_jobs``.
 
         Single-transaction INSERT-then-DELETE. The DLQ row keeps the
@@ -230,7 +243,8 @@ class JobStore(Protocol):
         delay_seconds: float,
         attempts: int,
         reason: Optional[str] = None,
-    ) -> None:
+        claimed_attempts: Optional[int] = None,
+    ) -> bool:
         """
         Snooze a running job: set status back to 'queued', scheduled_at
         forward by delay_seconds, and attempts to the supplied value

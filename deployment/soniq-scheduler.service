@@ -1,25 +1,27 @@
 # Soniq Scheduler systemd Service
 # Place this file in /etc/systemd/system/soniq-scheduler.service
+# Needed only if you use @periodic jobs. Extra copies on other hosts are
+# safe: they elect one leader through a PostgreSQL advisory lock.
 
 [Unit]
 Description=Soniq Scheduler
-After=network.target soniq-worker.service
-Requires=soniq-worker.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=exec
 User=soniq
 Group=soniq
 WorkingDirectory=/opt/soniq
-Environment=SONIQ_DATABASE_URL=postgresql://soniq:password@localhost/soniq_prod
+EnvironmentFile=-/etc/soniq/soniq.env
 Environment=SONIQ_LOG_LEVEL=INFO
-Environment=SONIQ_SCHEDULING_ENABLED=true
+# The scheduler imports these modules to find the @periodic jobs.
+Environment=SONIQ_JOBS_MODULES=myapp.jobs
 ExecStart=/opt/soniq/venv/bin/soniq scheduler
-ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
+TimeoutStopSec=30
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 
 # Security settings
 NoNewPrivileges=yes

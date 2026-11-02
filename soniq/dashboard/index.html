@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Soniq</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%232f6690' stroke-width='18' stroke-linecap='round' stroke-linejoin='round'><line x1='24' y1='216' x2='168' y2='216'/><path d='M88,116.51,58.65,88a8,8,0,0,1,2.2-13.3L68,72l57.53,21.17,54.84-32.75a32,32,0,0,1,41,7.32L240,91.64l-147.41,88a32,32,0,0,1-38-4.32L18.53,140a8,8,0,0,1,2.32-13.19L24,125.27,55.79,136Z'/></svg>">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
   --bg: #f4f6f9;
@@ -33,8 +30,8 @@
   --cancelled-soft: #eef0f3;
   --shadow: 0 1px 2px rgba(19, 32, 52, 0.05), 0 8px 24px -12px rgba(19, 32, 52, 0.12);
   --drawer-shadow: -24px 0 48px -24px rgba(19, 32, 52, 0.25);
-  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -358,9 +355,18 @@ function store(kind, key, value) {
 
 // ---- API ---------------------------------------------------------------
 
+// A key in the link (#api_key=...) is saved for the tab and
+// removed from the address bar, so it doesn't sit in history or get shared.
 (function takeKeyFromUrl() {
-  const params = new URLSearchParams(location.search);
-  if (params.get('api_key')) store('session', KEY_STORE, params.get('api_key'));
+  // Cut the key out of the hash by hand: round-tripping the whole hash through
+  // URLSearchParams would percent-encode the route ("#/failed" -> "#%2Ffailed=").
+  const inHash = location.hash.match(/[#&?]api_key=([^&]*)/);
+  const key = inHash ? decodeURIComponent(inHash[1]) : null;
+  if (!key) return;
+  store('session', KEY_STORE, key);
+  let h = location.hash.replace(/([#&?])api_key=[^&]*&?/, '$1').replace(/[&?]$/, '');
+  if (h === '#') h = '';
+  history.replaceState(null, '', location.pathname + location.search + h);
 })();
 
 class AuthError extends Error {}
@@ -498,7 +504,7 @@ const VIEWS = {
 
 function route() {
   const hash = location.hash.replace(/^#\/?/, '');
-  const [name, ...rest] = hash.split('/');
+  const [name, ...rest] = hash.split('?')[0].split('/');
   if (name === 'panel' && rest.length) return { view: 'panel:' + decodeURIComponent(rest.join('/')) };
   return { view: VIEWS[name] ? name : 'overview' };
 }
@@ -738,7 +744,7 @@ async function renderJobs(el) {
         <span class="muted">Failed jobs are under <a href="#/failed">Failed</a></span>
       </div>
       <div style="margin-top:12px">${jobTable(res.jobs, false)}</div>
-      ${res.total_count > limit ? `<div class="pager">
+      ${res.total_count > limit || f.offset > 0 ? `<div class="pager">
         <span>${num(f.offset + 1)} to ${num(Math.min(f.offset + limit, res.total_count))} of ${num(res.total_count)}</span>
         <span style="display:flex;gap:8px">
           <button class="btn sm" id="prev" ${f.offset === 0 ? 'disabled' : ''}>Previous</button>
@@ -780,7 +786,7 @@ async function renderFailed(el) {
             ${CAN_WRITE ? `<td><button class="btn sm" data-replay="${esc(j.id)}">Replay</button></td>` : ''}
           </tr>`).join('')}
         </tbody></table></div>
-      ${res.total_count > limit ? `<div class="pager">
+      ${res.total_count > limit || state.failedOffset > 0 ? `<div class="pager">
         <span>${num(state.failedOffset + 1)} to ${num(Math.min(state.failedOffset + limit, res.total_count))} of ${num(res.total_count)}</span>
         <span style="display:flex;gap:8px">
           <button class="btn sm" id="prev" ${state.failedOffset === 0 ? 'disabled' : ''}>Previous</button>
@@ -935,7 +941,7 @@ async function openJob(id) {
   let actions = '';
   if (CAN_WRITE) {
     if (j.status === 'queued') actions += `<button class="btn" data-act="cancel">Cancel job</button>`;
-    if (j.status !== 'processing') actions += `<button class="btn danger" data-act="delete">Delete job</button>`;
+    if (j.status !== 'processing' && j.status !== 'dead_letter') actions += `<button class="btn danger" data-act="delete">Delete job</button>`;
   }
   openDrawer(j.job_name, `${badge(j.status)} <span class="muted">created ${esc(ago(j.created_at))}</span>`, body, actions);
   wireActions(j.id);
